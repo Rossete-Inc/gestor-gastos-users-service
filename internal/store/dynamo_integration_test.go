@@ -9,11 +9,8 @@ package store
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -21,57 +18,16 @@ import (
 
 	"github.com/Rossete-Inc/gestor-gastos-go-commons/errs"
 	"github.com/Rossete-Inc/gestor-gastos-go-commons/page"
+	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/dynamotest"
 	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/perfil"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 )
 
 func tabelaDeTeste(t *testing.T) (*Dynamo, *dynamodb.Client) {
 	t.Helper()
-	endpoint := os.Getenv("DYNAMODB_ENDPOINT")
-	if endpoint == "" {
-		endpoint = "http://localhost:8000"
-	}
-	c := dynamodb.New(dynamodb.Options{
-		Region:       "us-east-1",
-		BaseEndpoint: aws.String(endpoint),
-		Credentials:  credentials.NewStaticCredentialsProvider("local", "local", ""),
-	})
-
-	var b [4]byte
-	_, _ = rand.Read(b[:])
-	nome := TableName + "-test-" + hex.EncodeToString(b[:])
-	ctx := context.Background()
-	_, err := c.CreateTable(ctx, &dynamodb.CreateTableInput{
-		TableName:   aws.String(nome),
-		BillingMode: types.BillingModePayPerRequest,
-		AttributeDefinitions: []types.AttributeDefinition{
-			{AttributeName: aws.String("PK"), AttributeType: types.ScalarAttributeTypeS},
-			{AttributeName: aws.String("SK"), AttributeType: types.ScalarAttributeTypeS},
-			{AttributeName: aws.String("GSI1PK"), AttributeType: types.ScalarAttributeTypeS},
-			{AttributeName: aws.String("GSI1SK"), AttributeType: types.ScalarAttributeTypeS},
-		},
-		KeySchema: []types.KeySchemaElement{
-			{AttributeName: aws.String("PK"), KeyType: types.KeyTypeHash},
-			{AttributeName: aws.String("SK"), KeyType: types.KeyTypeRange},
-		},
-		GlobalSecondaryIndexes: []types.GlobalSecondaryIndex{{
-			IndexName: aws.String("GSI1"),
-			KeySchema: []types.KeySchemaElement{
-				{AttributeName: aws.String("GSI1PK"), KeyType: types.KeyTypeHash},
-				{AttributeName: aws.String("GSI1SK"), KeyType: types.KeyTypeRange},
-			},
-			Projection: &types.Projection{ProjectionType: types.ProjectionTypeAll},
-		}},
-	})
-	if err != nil {
-		t.Fatalf("criar tabela no DynamoDB Local (%s); o ambiente está no ar? %v", endpoint, err)
-	}
-	t.Cleanup(func() {
-		_, _ = c.DeleteTable(context.Background(), &dynamodb.DeleteTableInput{TableName: aws.String(nome)})
-	})
+	c, nome := dynamotest.UsersTable(t, TableName)
 	return NewDynamo(c, nome), c
 }
 
