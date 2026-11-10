@@ -135,8 +135,19 @@ func run(ctx context.Context, lookup config.LookupFunc) error {
 		return err
 	case <-ctx.Done():
 		log.Info("encerrando")
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		// O http.Server só considera ociosa uma conexão aberta e ainda sem
+		// requisição (StateNew) depois de 5 s. Com um prazo de 5 s, uma conexão
+		// dessas, comum em clientes com keep-alive, estourava o prazo e deixava o
+		// TestPontaAPonta intermitente no CI. O prazo agora é maior, e se mesmo
+		// assim estourar as conexões são fechadas à força: é o ambiente local.
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		return srv.Shutdown(shutdownCtx)
+		if err := srv.Shutdown(shutdownCtx); errors.Is(err, context.DeadlineExceeded) {
+			log.Warn("encerramento passou do prazo; fechando as conexões restantes")
+			return srv.Close()
+		} else if err != nil {
+			return err
+		}
+		return nil
 	}
 }
