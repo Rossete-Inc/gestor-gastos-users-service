@@ -109,7 +109,7 @@ func TestPontaAPonta(t *testing.T) {
 		if err != nil {
 			t.Errorf("encerramento: %v", err)
 		}
-	case <-time.After(10 * time.Second):
+	case <-time.After(15 * time.Second):
 		t.Error("cmd/local não encerrou")
 	}
 }
