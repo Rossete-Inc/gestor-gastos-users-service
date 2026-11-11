@@ -10,12 +10,12 @@ import (
 	"github.com/Rossete-Inc/gestor-gastos-go-commons/invoke"
 	"github.com/Rossete-Inc/gestor-gastos-users-service/contract"
 	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/app"
-	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/perfil"
+	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/memstore"
 )
 
 func montarLambda() LambdaFunc {
 	log := slog.New(slog.NewJSONHandler(io.Discard, nil))
-	return Lambda(app.New(&memStore{perfis: map[string]perfil.Perfil{}}, log), log)
+	return Lambda(app.New(memstore.New(), log), log)
 }
 
 // chamar passa pela mesma serialização da AWS: payload em bytes na entrada e

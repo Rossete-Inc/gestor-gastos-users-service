@@ -10,7 +10,13 @@
 //	RUNTIME=aws          só roda na AWS; localmente use o cmd/local
 //	ENV=dev              ambiente
 //	USERS_TABLE=...      tabela DynamoDB dos perfis
+//	USER_POOL_ID=...     opcional: User Pool das operações de admin
+//	EVENT_BUS_NAME=...   opcional: barramento onde sai o UserDeleted
 //	LOG_LEVEL=info       opcional
+//
+// USER_POOL_ID e EVENT_BUS_NAME ligam as operações de admin (bloquear,
+// reativar, trocar papel, excluir) e vêm juntos; até o CDK defini-los
+// (tarefa 10.4), a função atende só o perfil e a listagem de usuários.
 //
 // Build (o mesmo do go-service.yml):
 //
@@ -26,22 +32,37 @@ import (
 	"os"
 
 	"github.com/Rossete-Inc/gestor-gastos-go-commons/config"
+	"github.com/Rossete-Inc/gestor-gastos-go-commons/events"
 	"github.com/Rossete-Inc/gestor-gastos-go-commons/logging"
 	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/app"
+	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/contas"
 	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/handler"
 	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/store"
 	"github.com/aws/aws-lambda-go/lambda"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/eventbridge"
 )
 
-const servico = "users-service"
+const (
+	servico = "users-service"
+	// fonteDosEventos é o source dos eventos publicados (UserDeleted).
+	fonteDosEventos = "gestor-gastos.users-service"
+)
 
 // Config é a configuração da Lambda.
 type Config struct {
 	Base  config.Base
 	Table string
+	// UserPoolID e BusName ligam as operações de admin; vazios, ficam
+	// desligadas.
+	UserPoolID string
+	BusName    string
 }
+
+// Admin informa se as operações de admin estão configuradas.
+func (c Config) Admin() bool { return c.UserPoolID != "" }
 
 // LoadConfig lê o ambiente. Só aceita RUNTIME=aws e informa de uma vez todas
 // as variáveis que faltam.
@@ -54,9 +75,15 @@ func LoadConfig(lookup config.LookupFunc) (Config, error) {
 		return Config{}, errors.New("cmd/lambda exige RUNTIME=aws; localmente use o cmd/local")
 	}
 	r := config.NewReader(lookup)
-	c := Config{Base: base, Table: r.Require("USERS_TABLE")}
+	c := Config{
+		Base: base, Table: r.Require("USERS_TABLE"),
+		UserPoolID: r.Get("USER_POOL_ID", ""), BusName: r.Get("EVENT_BUS_NAME", ""),
+	}
 	if err := r.Err(); err != nil {
 		return Config{}, err
+	}
+	if (c.UserPoolID == "") != (c.BusName == "") {
+		return Config{}, errors.New("USER_POOL_ID e EVENT_BUS_NAME ligam juntos as operações de admin: defina os dois ou nenhum")
 	}
 	return c, nil
 }
@@ -73,6 +100,17 @@ func novoHandler(ctx context.Context, lookup config.LookupFunc) (handler.LambdaF
 	}
 	log := logging.New(logging.Options{Service: servico, Env: cfg.Base.Env, Level: cfg.Base.LogLevel})
 	svc := app.New(store.NewDynamo(dynamodb.NewFromConfig(awsCfg), cfg.Table), log)
+	if cfg.Admin() {
+		pub, err := events.NewPublisher(events.Options{
+			Runtime: cfg.Base.Runtime, Source: fonteDosEventos,
+			BusName: cfg.BusName, API: eventbridge.NewFromConfig(awsCfg),
+		})
+		if err != nil {
+			return nil, err
+		}
+		svc.ComAdmin(contas.NewCognito(cognitoidentityprovider.NewFromConfig(awsCfg), cfg.UserPoolID), pub)
+	}
+	log.Info("users-service configurado", "admin", cfg.Admin())
 	return handler.Lambda(svc, log), nil
 }
 

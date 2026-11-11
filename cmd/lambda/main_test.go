@@ -23,12 +23,32 @@ func TestLoadConfig(t *testing.T) {
 	}
 }
 
+func TestLoadConfigAdmin(t *testing.T) {
+	m := map[string]string{"USER_POOL_ID": "us-east-1_abc", "EVENT_BUS_NAME": "gestor-gastos-dev"}
+	for k, v := range envValido {
+		m[k] = v
+	}
+	c, err := LoadConfig(env(m))
+	if err != nil || !c.Admin() || c.UserPoolID != "us-east-1_abc" || c.BusName != "gestor-gastos-dev" {
+		t.Fatalf("config = %+v, %v", c, err)
+	}
+	if c, _ := LoadConfig(env(envValido)); c.Admin() {
+		t.Error("admin ligado sem USER_POOL_ID")
+	}
+	var recebido any
+	if codigo := executar(context.Background(), env(m), func(h any) { recebido = h }); codigo != 0 || recebido == nil {
+		t.Errorf("executar com admin: código %d", codigo)
+	}
+}
+
 func TestLoadConfigRecusa(t *testing.T) {
 	casos := map[string]map[string]string{
-		"sem RUNTIME":     {"ENV": "dev", "USERS_TABLE": "t"},
-		"RUNTIME=local":   {"RUNTIME": "local", "USERS_TABLE": "t"},
-		"sem USERS_TABLE": {"RUNTIME": "aws", "ENV": "dev"},
-		"sem ENV":         {"RUNTIME": "aws", "USERS_TABLE": "t"},
+		"só USER_POOL_ID":   {"RUNTIME": "aws", "ENV": "dev", "USERS_TABLE": "t", "USER_POOL_ID": "p"},
+		"só EVENT_BUS_NAME": {"RUNTIME": "aws", "ENV": "dev", "USERS_TABLE": "t", "EVENT_BUS_NAME": "b"},
+		"sem RUNTIME":       {"ENV": "dev", "USERS_TABLE": "t"},
+		"RUNTIME=local":     {"RUNTIME": "local", "USERS_TABLE": "t"},
+		"sem USERS_TABLE":   {"RUNTIME": "aws", "ENV": "dev"},
+		"sem ENV":           {"RUNTIME": "aws", "USERS_TABLE": "t"},
 	}
 	for nome, m := range casos {
 		t.Run(nome, func(t *testing.T) {

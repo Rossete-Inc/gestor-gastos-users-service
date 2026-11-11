@@ -11,10 +11,9 @@ import (
 
 	"github.com/Rossete-Inc/gestor-gastos-go-commons/errs"
 	"github.com/Rossete-Inc/gestor-gastos-go-commons/invoke"
-	"github.com/Rossete-Inc/gestor-gastos-go-commons/page"
 	"github.com/Rossete-Inc/gestor-gastos-users-service/contract"
 	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/app"
-	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/perfil"
+	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/memstore"
 )
 
 func env(m map[string]string) func(string) (string, bool) {
@@ -61,23 +60,9 @@ func TestRunConfigInvalida(t *testing.T) {
 	}
 }
 
-type vazio struct{}
-
-func (vazio) Criar(_ context.Context, p perfil.Perfil) (perfil.Perfil, bool, error) {
-	return p, true, nil
-}
-
-func (vazio) Obter(context.Context, string) (perfil.Perfil, error) {
-	return perfil.Perfil{}, errs.NotFound("perfil_nao_encontrado", "Perfil não encontrado.")
-}
-
-func (vazio) Listar(context.Context, int, page.Key) ([]perfil.Perfil, page.Key, error) {
-	return nil, nil, nil
-}
-
 func TestRotas(t *testing.T) {
 	log := slog.New(slog.NewJSONHandler(io.Discard, nil))
-	srv := httptest.NewServer(NewHandler(app.New(vazio{}, log), log))
+	srv := httptest.NewServer(NewHandler(app.New(memstore.New(), log), log))
 	t.Cleanup(srv.Close)
 
 	t.Run("healthz", func(t *testing.T) {

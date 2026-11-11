@@ -4,11 +4,13 @@ package app
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
 	"github.com/Rossete-Inc/gestor-gastos-go-commons/events"
 	"github.com/Rossete-Inc/gestor-gastos-go-commons/page"
+	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/contas"
 	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/perfil"
 )
 
@@ -22,13 +24,24 @@ type Store interface {
 	// Listar devolve os perfis do mais novo para o mais antigo, a partir de
 	// inicio (nil = primeira página), e a chave da próxima página (nil = fim).
 	Listar(ctx context.Context, limit int, inicio page.Key) ([]perfil.Perfil, page.Key, error)
+	// Salvar regrava um perfil existente. Inexistente vira
+	// errs.NotFound("perfil_nao_encontrado"), sem criar nada.
+	Salvar(ctx context.Context, p perfil.Perfil) error
+	// ContarAdminsAtivos conta os perfis admin com status ATIVO.
+	ContarAdminsAtivos(ctx context.Context) (int, error)
 }
+
+// errAdminDesligado só aparece se o handler expuser uma operação de admin
+// sem ComAdmin, o que seria bug: o handler só as registra com o admin ligado.
+var errAdminDesligado = errors.New("operações de admin sem Cognito e barramento configurados")
 
 // Service implementa os casos de uso.
 type Service struct {
-	store Store
-	log   *slog.Logger
-	agora func() time.Time
+	store   Store
+	log     *slog.Logger
+	agora   func() time.Time
+	contas  contas.Contas
+	eventos events.Publisher
 }
 
 // New cria o Service. log nil usa slog.Default().

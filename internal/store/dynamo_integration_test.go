@@ -185,3 +185,65 @@ func TestListarVazio(t *testing.T) {
 		t.Errorf("Listar = %v, %v, %v", perfis, proxima, err)
 	}
 }
+
+func TestSalvar(t *testing.T) {
+	ctx := context.Background()
+	d, _ := tabelaDeTeste(t)
+	p := novo(t, "u-1", base)
+	if _, _, err := d.Criar(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Bloquear(base.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.MudarPapel(perfil.Admin, base.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Salvar(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	lido, err := d.Obter(ctx, "u-1")
+	if err != nil || lido != p {
+		t.Errorf("lido = %+v, %v\nquer   %+v", lido, err, p)
+	}
+	// A listagem continua achando o perfil pelo GSI1 depois da regravação.
+	itens, _, err := d.Listar(ctx, 10, nil)
+	if err != nil || len(itens) != 1 || itens[0].Status != perfil.Bloqueado {
+		t.Errorf("listar = %+v, %v", itens, err)
+	}
+
+	err = d.Salvar(ctx, novo(t, "nao-existe", base))
+	if e := errs.As(err); e == nil || e.Kind != errs.KindNotFound {
+		t.Errorf("salvar inexistente = %v", err)
+	}
+	if _, err := d.Obter(ctx, "nao-existe"); errs.KindOf(err) != errs.KindNotFound {
+		t.Error("Salvar criou um perfil inexistente")
+	}
+}
+
+func TestContarAdminsAtivos(t *testing.T) {
+	ctx := context.Background()
+	d, _ := tabelaDeTeste(t)
+	if n, err := d.ContarAdminsAtivos(ctx); err != nil || n != 0 {
+		t.Fatalf("tabela vazia = %d, %v", n, err)
+	}
+	criar := func(id string, papel perfil.Papel, bloquear bool) {
+		p, err := perfil.Novo(id, id+"@x.com", "Nome", papel, base)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bloquear {
+			_ = p.Bloquear(base)
+		}
+		if _, _, err := d.Criar(ctx, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	criar("a1", perfil.Admin, false)
+	criar("a2", perfil.Admin, false)
+	criar("a3", perfil.Admin, true) // bloqueado não conta
+	criar("c1", perfil.Cliente, false)
+	if n, err := d.ContarAdminsAtivos(ctx); err != nil || n != 2 {
+		t.Errorf("admins ativos = %d, %v", n, err)
+	}
+}

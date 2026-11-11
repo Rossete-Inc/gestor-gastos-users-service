@@ -7,6 +7,10 @@
 //	POST /events  eventos (UserConfirmed)
 //	GET  /healthz
 //
+// As operações de admin usam o contas.Fake no lugar do Cognito (o
+// cognito-local não suporta todas) e publicam o UserDeleted por HTTP nos
+// consumidores de LOCAL_EVENT_TARGETS (vazio = nenhum).
+//
 // Escuta só em 127.0.0.1: o /invoke confia no userId do envelope, e na AWS
 // quem garante isso é o IAM, que deixa só o BFF invocar a Lambda.
 //
@@ -31,6 +35,7 @@ import (
 	"github.com/Rossete-Inc/gestor-gastos-go-commons/invoke"
 	"github.com/Rossete-Inc/gestor-gastos-go-commons/logging"
 	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/app"
+	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/contas"
 	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/handler"
 	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/store"
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -46,6 +51,7 @@ type Config struct {
 	Port           string
 	DynamoEndpoint string
 	Table          string
+	EventTargets   string
 }
 
 // LoadConfig lê o ambiente. Só aceita RUNTIME=local e um DynamoDB local, para
@@ -64,6 +70,7 @@ func LoadConfig(lookup config.LookupFunc) (Config, error) {
 		Port:           r.Get("PORT", "8082"),
 		DynamoEndpoint: r.Get("DYNAMODB_ENDPOINT", "http://localhost:8000"),
 		Table:          r.Get("USERS_TABLE", store.TableName),
+		EventTargets:   r.Get("LOCAL_EVENT_TARGETS", ""),
 	}
 	if err := exigirLocal(c.DynamoEndpoint); err != nil {
 		return Config{}, err
@@ -116,7 +123,13 @@ func run(ctx context.Context, lookup config.LookupFunc) error {
 		BaseEndpoint: aws.String(cfg.DynamoEndpoint),
 		Credentials:  credentials.NewStaticCredentialsProvider("local", "local", ""),
 	})
-	svc := app.New(store.NewDynamo(db, cfg.Table), log)
+	pub, err := events.NewPublisher(events.Options{
+		Runtime: cfg.Base.Runtime, Source: "gestor-gastos.users-service", LocalTargets: cfg.EventTargets, Log: log,
+	})
+	if err != nil {
+		return err
+	}
+	svc := app.New(store.NewDynamo(db, cfg.Table), log).ComAdmin(contas.NewFake(), pub)
 
 	srv := &http.Server{
 		Addr:              net.JoinHostPort("127.0.0.1", cfg.Port),

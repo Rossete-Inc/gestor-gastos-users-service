@@ -9,46 +9,11 @@ import (
 
 	"github.com/Rossete-Inc/gestor-gastos-go-commons/errs"
 	"github.com/Rossete-Inc/gestor-gastos-go-commons/events"
-	"github.com/Rossete-Inc/gestor-gastos-go-commons/page"
+	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/memstore"
 	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/perfil"
 )
 
-// memStore é um Store em memória com a mesma semântica do Dynamo.
-type memStore struct {
-	mu      sync.Mutex
-	perfis  map[string]perfil.Perfil
-	criados int
-	err     error
-}
-
-func newMem() *memStore { return &memStore{perfis: map[string]perfil.Perfil{}} }
-
-func (m *memStore) Criar(_ context.Context, p perfil.Perfil) (perfil.Perfil, bool, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.err != nil {
-		return perfil.Perfil{}, false, m.err
-	}
-	if atual, ok := m.perfis[p.ID]; ok {
-		return atual, false, nil
-	}
-	m.perfis[p.ID] = p
-	m.criados++
-	return p, true, nil
-}
-
-func (m *memStore) Obter(_ context.Context, id string) (perfil.Perfil, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if p, ok := m.perfis[id]; ok {
-		return p, nil
-	}
-	return perfil.Perfil{}, errs.NotFound("perfil_nao_encontrado", "Perfil não encontrado.")
-}
-
-func (m *memStore) Listar(context.Context, int, page.Key) ([]perfil.Perfil, page.Key, error) {
-	return nil, nil, nil
-}
+func newMem() *memstore.Store { return memstore.New() }
 
 func novoService(st Store) *Service {
 	s := New(st, nil)
@@ -86,8 +51,8 @@ func TestCriarEIdempotente(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if segundo != primeiro || st.criados != 1 {
-		t.Errorf("segundo = %+v, criados = %d", segundo, st.criados)
+	if segundo != primeiro || st.Criados != 1 {
+		t.Errorf("segundo = %+v, criados = %d", segundo, st.Criados)
 	}
 }
 
@@ -97,14 +62,14 @@ func TestCriarValidaAntesDoStore(t *testing.T) {
 	if errs.KindOf(err) != errs.KindValidation {
 		t.Errorf("erro = %v", err)
 	}
-	if len(st.perfis) != 0 {
+	if st.Criados != 0 {
 		t.Error("perfil inválido chegou ao store")
 	}
 }
 
 func TestErroDoStore(t *testing.T) {
 	st := newMem()
-	st.err = errs.Internal(errors.New("dynamodb fora"))
+	st.Err = errs.Internal(errors.New("dynamodb fora"))
 	_, err := novoService(st).CriarPerfil(context.Background(), "u-1", "a@x.com", "Ana", perfil.Cliente)
 	if errs.KindOf(err) != errs.KindInternal {
 		t.Errorf("erro = %v", err)
@@ -132,8 +97,8 @@ func TestConsumirUserConfirmed(t *testing.T) {
 	}
 	p, _ := s.ObterPerfil(ctx, "u-9")
 	// Cenário "Cadastro público": a conta recebe somente o papel cliente.
-	if p.Papel != perfil.Cliente || p.Status != perfil.Ativo || st.criados != 1 {
-		t.Errorf("perfil = %+v, criados = %d", p, st.criados)
+	if p.Papel != perfil.Cliente || p.Status != perfil.Ativo || st.Criados != 1 {
+		t.Errorf("perfil = %+v, criados = %d", p, st.Criados)
 	}
 }
 
@@ -166,7 +131,7 @@ func TestCriarConcorrente(t *testing.T) {
 		})
 	}
 	wg.Wait()
-	if st.criados != 1 {
-		t.Errorf("criados = %d", st.criados)
+	if st.Criados != 1 {
+		t.Errorf("criados = %d", st.Criados)
 	}
 }
