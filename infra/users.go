@@ -7,6 +7,7 @@ import (
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsdynamodb"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsevents"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awseventstargets"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awsiam"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslambda"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslambdadestinations"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslogs"
@@ -36,6 +37,8 @@ type UsersProps struct {
 //   - CodeDeploy com canary de 10% por 5 minutos e rollback automático por
 //     falha ou alarme de erros;
 //   - regra do EventBridge para UserConfirmed, com retentativas e DLQ;
+//   - operações de admin: Cognito Admin só no User Pool do ambiente e
+//     PutEvents no barramento, para o UserDeleted;
 //   - logs por 7 dias;
 //   - ARN do alias e nome da tabela publicados no SSM para o BFF.
 func NovaStackUsers(scope constructs.Construct, id string, props *UsersProps) awscdk.Stack {
@@ -55,7 +58,8 @@ func NovaStackUsers(scope constructs.Construct, id string, props *UsersProps) aw
 	nome := NomeStack(env, NomeServico)
 
 	tabela := novaTabela(stack, nome)
-	alias := novaFuncao(stack, env, nome, props.Codigo, tabela)
+	alias := novaFuncao(stack, env, nome, props.Codigo, tabela, params)
+	permissoesDeAdmin(alias, params)
 
 	dlq := awssqs.Queue_FromQueueArn(stack, jsii.String("Dlq"), jsii.String(params[ParamDlqArn]))
 
@@ -129,7 +133,7 @@ func novaTabela(stack awscdk.Stack, nome string) awsdynamodb.Table {
 
 // novaFuncao cria a Lambda e o alias live, que aponta sempre para a versão
 // atual. Quem move o tráfego do alias entre versões é o CodeDeploy.
-func novaFuncao(stack awscdk.Stack, env, nome string, codigo awslambda.Code, tabela awsdynamodb.Table) awslambda.Alias {
+func novaFuncao(stack awscdk.Stack, env, nome string, codigo awslambda.Code, tabela awsdynamodb.Table, params Parametros) awslambda.Alias {
 	logs := awslogs.NewLogGroup(stack, jsii.String("Logs"), &awslogs.LogGroupProps{
 		LogGroupName:  jsii.String("/aws/lambda/" + nome),
 		Retention:     awslogs.RetentionDays_ONE_WEEK,
@@ -151,6 +155,9 @@ func novaFuncao(stack awscdk.Stack, env, nome string, codigo awslambda.Code, tab
 			"ENV":         jsii.String(env),
 			"USERS_TABLE": tabela.TableName(),
 			"LOG_LEVEL":   jsii.String("info"),
+			// Os dois juntos ligam as operações de admin (cmd/lambda).
+			"USER_POOL_ID":   jsii.String(params[ParamUserPoolID]),
+			"EVENT_BUS_NAME": jsii.String(params[ParamBusName]),
 		},
 	})
 	tabela.GrantReadWriteData(fn)
@@ -160,6 +167,30 @@ func novaFuncao(stack awscdk.Stack, env, nome string, codigo awslambda.Code, tab
 		Version:     fn.CurrentVersion(),
 		Description: jsii.String("Versão em produção; o CodeDeploy faz o canary entre versões"),
 	})
+}
+
+// AcoesCognitoAdmin são as operações do internal/contas.Cognito: bloquear
+// (disable + global sign-out), reativar, trocar de grupo e excluir.
+var AcoesCognitoAdmin = []string{
+	"cognito-idp:AdminDisableUser",
+	"cognito-idp:AdminEnableUser",
+	"cognito-idp:AdminUserGlobalSignOut",
+	"cognito-idp:AdminAddUserToGroup",
+	"cognito-idp:AdminRemoveUserFromGroup",
+	"cognito-idp:AdminDeleteUser",
+}
+
+// permissoesDeAdmin dá à função só o que as operações de admin usam: as
+// AcoesCognitoAdmin no ARN do User Pool do ambiente (não userpool/*) e
+// events:PutEvents no barramento, para publicar o UserDeleted.
+func permissoesDeAdmin(alias awslambda.Alias, params Parametros) {
+	alias.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
+		Sid:       jsii.String("CognitoAdminNoPool"),
+		Actions:   jsii.Strings(AcoesCognitoAdmin...),
+		Resources: jsii.Strings(params[ParamUserPoolArn]),
+	}))
+	barramento := awsevents.EventBus_FromEventBusName(alias.Stack(), jsii.String("BarramentoUserDeleted"), jsii.String(params[ParamBusName]))
+	barramento.GrantPutEventsTo(alias, nil)
 }
 
 // novoCanary liga o alias ao CodeDeploy: cada versão nova recebe 10% do

@@ -43,10 +43,13 @@ const (
 // Ambientes implantáveis. Por custo, há um único ambiente na AWS (ADR 0007).
 var Ambientes = []string{"dev"}
 
-// Parâmetros lidos do SSM, publicados pela stack events do infra-base.
+// Parâmetros lidos do SSM, publicados pelas stacks events e auth do
+// infra-base.
 const (
-	ParamBusName = "events/bus-name"
-	ParamDlqArn  = "events/dlq-arn"
+	ParamBusName     = "events/bus-name"
+	ParamDlqArn      = "events/dlq-arn"
+	ParamUserPoolID  = "auth/user-pool-id"
+	ParamUserPoolArn = "auth/user-pool-arn"
 )
 
 // Parâmetros publicados por esta stack. O BFF lê ParamFunctionArn para
@@ -59,12 +62,14 @@ const (
 // origemParametro diz quem publica cada parâmetro lido, para a mensagem de
 // erro apontar o que implantar.
 var origemParametro = map[string]string{
-	ParamBusName: "stack gestor-gastos-<env>-events do gestor-gastos-infra-base",
-	ParamDlqArn:  "stack gestor-gastos-<env>-events do gestor-gastos-infra-base",
+	ParamBusName:     "stack gestor-gastos-<env>-events do gestor-gastos-infra-base",
+	ParamDlqArn:      "stack gestor-gastos-<env>-events do gestor-gastos-infra-base",
+	ParamUserPoolID:  "stack gestor-gastos-<env>-auth do gestor-gastos-infra-base",
+	ParamUserPoolArn: "stack gestor-gastos-<env>-auth do gestor-gastos-infra-base",
 }
 
 // ParametrosLidos são os parâmetros do SSM de que a stack depende.
-var ParametrosLidos = []string{ParamBusName, ParamDlqArn}
+var ParametrosLidos = []string{ParamBusName, ParamDlqArn, ParamUserPoolID, ParamUserPoolArn}
 
 // PrefixoSSM devolve o caminho base dos parâmetros de um ambiente no SSM.
 // Ex.: /gestor-gastos/dev.

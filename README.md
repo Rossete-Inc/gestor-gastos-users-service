@@ -44,7 +44,8 @@ O BFF só chama estas operações com o token de quem está no grupo `admin`; o 
 - **Exclusão:** apaga a conta no Cognito (conta que já não existe não é erro), marca o perfil como `EXCLUIDO` e publica `UserDeleted`, que apaga gastos e categorias personalizadas nos outros serviços. Excluir de novo um perfil `EXCLUIDO` republica o evento, o que cobre uma falha na publicação. Conta `EXCLUIDO` não muda mais de status nem de papel.
 - **Pedido sem mudança:** pedir o estado que a conta já tem devolve o perfil sem chamar o Cognito.
 - **Cursor:** a chave do GSI1 em base64url, sem assinatura. A listagem é a mesma para qualquer admin e não tem filtro, então adulterar o cursor só mudaria a posição numa lista que o admin já vê inteira. Mesmo assim, a chave é validada campo a campo, e fora do formato vira 400 `cursor_invalido`.
-- **Na Lambda,** bloquear, reativar, trocar papel e excluir só existem com `USER_POOL_ID` e `EVENT_BUS_NAME` definidos (tarefa 10.4). Sem eles, essas operações respondem 400 `operacao_desconhecida` e só a listagem funciona.
+- **Na Lambda,** bloquear, reativar, trocar papel e excluir só existem com `USER_POOL_ID` e `EVENT_BUS_NAME` definidos, o que o CDK faz desde a tarefa 10.4. Sem eles, essas operações respondem 400 `operacao_desconhecida` e só a listagem funciona.
+- **Evento:** o `UserDeleted` sai com `source=gestor-gastos.users`, o que as regras do expenses-service e do categories-service filtram.
 
 ## Rodar localmente
 
@@ -136,7 +137,7 @@ Stack `gestor-gastos-dev-users` (`infra/`), implantada pela esteira a cada merge
 | Recurso | Configuração |
 | --- | --- |
 | Tabela `gestor-gastos-dev-users` | DynamoDB on-demand, `PK`/`SK` e `GSI1` (`GSI1PK`/`GSI1SK`, projeção ALL), como `internal/store`. `RemovalPolicy: RETAIN`: apagar a stack não apaga os perfis |
-| Lambda `gestor-gastos-dev-users` | `provided.al2023`, arm64, 256 MB, timeout de 10 s, sem VPC. Variáveis `RUNTIME=aws`, `ENV=dev`, `USERS_TABLE` e `LOG_LEVEL`. Permissão de leitura e escrita só na tabela |
+| Lambda `gestor-gastos-dev-users` | `provided.al2023`, arm64, 256 MB, timeout de 10 s, sem VPC. Variáveis `RUNTIME=aws`, `ENV=dev`, `USERS_TABLE`, `LOG_LEVEL`, `USER_POOL_ID` e `EVENT_BUS_NAME`. Permissões: leitura e escrita só na tabela; `AdminDisableUser`, `AdminEnableUser`, `AdminUserGlobalSignOut`, `AdminAddUserToGroup`, `AdminRemoveUserFromGroup` e `AdminDeleteUser` só no ARN do User Pool do ambiente; `events:PutEvents` só no barramento (`UserDeleted`) |
 | Alias `live` | O que o BFF invoca e a regra do EventBridge aciona |
 | CodeDeploy | Canary `LambdaCanary10Percent5Minutes`: a versão nova recebe 10% do tráfego do `live` por 5 minutos e depois 100%. Rollback automático se o deploy falhar ou se o alarme `gestor-gastos-dev-users-erros` (erros no alias ≥ 1 em 1 minuto) disparar |
 | Regra `gestor-gastos-dev-users-user-confirmed` | No barramento `gestor-gastos-dev`, filtra `source=gestor-gastos.auth` e `detail-type=UserConfirmed`. Target: o alias `live`, com até 8 retentativas de entrega em 2 horas e a DLQ do barramento |
@@ -153,10 +154,12 @@ Custo parado perto de zero: on-demand, sem provisioned concurrency, sem VPC, um 
 | --- | --- | --- | --- |
 | `/gestor-gastos/dev/events/bus-name` | lido | `gestor-gastos-dev` | regra do EventBridge |
 | `/gestor-gastos/dev/events/dlq-arn` | lido | ARN da DLQ do barramento | DLQ do target e destino `OnFailure` |
+| `/gestor-gastos/dev/auth/user-pool-id` | lido | ID do User Pool | variável `USER_POOL_ID` |
+| `/gestor-gastos/dev/auth/user-pool-arn` | lido | ARN do User Pool | escopo da permissão de Cognito Admin |
 | `/gestor-gastos/dev/users/function-arn` | publicado | ARN do alias `live` (`arn:aws:lambda:us-east-1:<conta>:function:gestor-gastos-dev-users:live`) | BFF (`lambda:InvokeFunction`) |
 | `/gestor-gastos/dev/users/table-name` | publicado | `gestor-gastos-dev-users` | inspeção e, mais tarde, ferramentas de admin |
 
-**Ordem de deploy:** infra-base (stack `events`) → users-service → BFF. O BFF lê `users/function-arn`, então o users-service precisa ter sido implantado antes.
+**Ordem de deploy:** infra-base (stacks `events` e `auth`) → users-service → BFF. O BFF lê `users/function-arn`, então o users-service precisa ter sido implantado antes.
 
 **Falha clara quando falta parâmetro.** Na esteira (variável `AMBIENTE`, definida pelo `go-service.yml`), o app CDK lê os parâmetros do infra-base no synth, com as credenciais do job, e grava os valores no template. Se faltar algum, o `cdk synth`, o `cdk diff` e o `cdk deploy` param antes de tocar na conta, com uma mensagem que lista os ausentes e quem os publica:
 
