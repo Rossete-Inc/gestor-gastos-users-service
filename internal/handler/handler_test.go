@@ -5,46 +5,17 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/Rossete-Inc/gestor-gastos-go-commons/errs"
 	"github.com/Rossete-Inc/gestor-gastos-go-commons/events"
 	"github.com/Rossete-Inc/gestor-gastos-go-commons/invoke"
-	"github.com/Rossete-Inc/gestor-gastos-go-commons/page"
 	"github.com/Rossete-Inc/gestor-gastos-users-service/contract"
 	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/app"
-	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/perfil"
+	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/contas"
+	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/memstore"
 )
-
-type memStore struct {
-	mu     sync.Mutex
-	perfis map[string]perfil.Perfil
-}
-
-func (m *memStore) Criar(_ context.Context, p perfil.Perfil) (perfil.Perfil, bool, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if atual, ok := m.perfis[p.ID]; ok {
-		return atual, false, nil
-	}
-	m.perfis[p.ID] = p
-	return p, true, nil
-}
-
-func (m *memStore) Obter(_ context.Context, id string) (perfil.Perfil, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if p, ok := m.perfis[id]; ok {
-		return p, nil
-	}
-	return perfil.Perfil{}, errs.NotFound("perfil_nao_encontrado", "Perfil não encontrado.")
-}
-
-func (m *memStore) Listar(context.Context, int, page.Key) ([]perfil.Perfil, page.Key, error) {
-	return nil, nil, nil
-}
 
 // transporte entrega o envelope direto ao router, passando por JSON como os
 // transportes reais.
@@ -59,7 +30,7 @@ func (t transporte) Send(ctx context.Context, req invoke.Request) (invoke.Respon
 
 func montar() (*invoke.Client, *events.Router) {
 	log := slog.New(slog.NewJSONHandler(io.Discard, nil))
-	svc := app.New(&memStore{perfis: map[string]perfil.Perfil{}}, log)
+	svc := app.New(memstore.New(), log)
 	return invoke.NewClient(transporte{Invoke(svc, log)}), Events(svc, log)
 }
 
@@ -138,5 +109,99 @@ func TestEventoInvalido(t *testing.T) {
 	err := ev.Dispatch(context.Background(), events.Event{DetailType: events.UserConfirmed, Detail: detail})
 	if errs.KindOf(err) != errs.KindValidation {
 		t.Errorf("erro = %v", err)
+	}
+}
+
+// semEventos aceita qualquer publicação.
+type semEventos struct{ n int }
+
+func (s *semEventos) Publish(context.Context, string, any) error { s.n++; return nil }
+
+func montarAdmin(t *testing.T) (*invoke.Client, *memstore.Store, *contas.Fake, *semEventos) {
+	t.Helper()
+	log := slog.New(slog.NewJSONHandler(io.Discard, nil))
+	st, fake, pub := memstore.New(), contas.NewFake(), &semEventos{}
+	svc := app.New(st, log).ComAdmin(fake, pub)
+	c := invoke.NewClient(transporte{Invoke(svc, log)})
+	ctx := context.Background()
+	for _, u := range []struct{ id, papel string }{{"adm", "admin"}, {"ana", "cliente"}} {
+		in := contract.CriarPerfilIn{Email: u.id + "@x.com", Nome: u.id, Papel: u.papel}
+		if err := c.Call(ctx, contract.OpCriarPerfil, u.id, in, &contract.Perfil{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return c, st, fake, pub
+}
+
+func TestAdminPeloContrato(t *testing.T) {
+	ctx := context.Background()
+	c, _, fake, pub := montarAdmin(t)
+
+	var pg contract.PaginaUsuarios
+	if err := c.Call(ctx, contract.OpListarUsuarios, "adm", contract.ListarUsuariosIn{Limit: 10}, &pg); err != nil || len(pg.Items) != 2 {
+		t.Fatalf("listar = %+v, %v", pg, err)
+	}
+
+	var p contract.Perfil
+	in := contract.AtualizarUsuarioIn{ID: "ana", Status: "BLOQUEADO", Papel: "admin"}
+	if err := c.Call(ctx, contract.OpAtualizarUsuario, "adm", in, &p); err != nil {
+		t.Fatal(err)
+	}
+	if p.Status != "BLOQUEADO" || p.Papel != "admin" || !fake.Bloqueada("ana") {
+		t.Errorf("atualizado = %+v", p)
+	}
+
+	err := c.Call(ctx, contract.OpAtualizarUsuario, "adm", contract.AtualizarUsuarioIn{ID: "adm", Status: "BLOQUEADO"}, &p)
+	if e := errs.As(err); e == nil || e.Kind != errs.KindConflict || e.Code != contract.CodigoBloquearASiMesmo {
+		t.Errorf("bloquear a si mesmo = %v", err)
+	}
+	err = c.Call(ctx, contract.OpAtualizarUsuario, "adm", contract.AtualizarUsuarioIn{ID: "ana", Status: "EXCLUIDO"}, &p)
+	if e := errs.As(err); e == nil || e.Kind != errs.KindValidation {
+		t.Errorf("status inválido = %v", err)
+	}
+
+	if err := c.Call(ctx, contract.OpExcluirUsuario, "adm", contract.ExcluirUsuarioIn{ID: "ana"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !fake.Excluida("ana") || pub.n != 1 {
+		t.Errorf("excluir: conta excluída %v, eventos %d", fake.Excluida("ana"), pub.n)
+	}
+	err = c.Call(ctx, contract.OpExcluirUsuario, "adm", contract.ExcluirUsuarioIn{ID: "nao-existe"}, nil)
+	if e := errs.As(err); e == nil || e.Code != contract.CodigoUsuarioNaoEncontrado {
+		t.Errorf("excluir inexistente = %v", err)
+	}
+	for _, op := range []string{contract.OpListarUsuarios, contract.OpAtualizarUsuario, contract.OpExcluirUsuario} {
+		err := c.Call(ctx, op, "", map[string]string{"id": "ana"}, nil)
+		if e := errs.As(err); e == nil || e.Code != "usuario_ausente" {
+			t.Errorf("%s sem usuário = %v", op, err)
+		}
+	}
+}
+
+func TestListarUsuariosFormatoJSON(t *testing.T) {
+	// Lista vazia: items sai como [] e nextCursor some (openapi: TelaAdminUsuarios).
+	log := slog.New(slog.NewJSONHandler(io.Discard, nil))
+	r := Invoke(app.New(memstore.New(), log), log)
+	resp := r.Dispatch(context.Background(), invoke.Request{Operation: contract.OpListarUsuarios, UserID: "adm", Payload: json.RawMessage(`{}`)})
+	if string(resp.Payload) != `{"items":[]}` {
+		t.Errorf("payload = %s", resp.Payload)
+	}
+	resp = r.Dispatch(context.Background(), invoke.Request{Operation: contract.OpListarUsuarios, UserID: "adm", Payload: json.RawMessage(`{"cursor":"!!"}`)})
+	if p := errs.FromProblem(*resp.Error); p.Code != contract.CodigoCursorInvalido {
+		t.Errorf("cursor inválido = %+v", resp.Error)
+	}
+}
+
+func TestAdminDesligadoNaoExpoeAsOperacoes(t *testing.T) {
+	// Lambda antes da 10.4: só a listagem; o resto é operação desconhecida.
+	c, _ := montar()
+	for _, op := range []string{contract.OpAtualizarUsuario, contract.OpExcluirUsuario} {
+		err := c.Call(context.Background(), op, "adm", contract.ExcluirUsuarioIn{ID: "ana"}, nil)
+		if e := errs.As(err); e == nil || e.Code != "operacao_desconhecida" {
+			t.Errorf("%s = %v", op, err)
+		}
+	}
+	if err := c.Call(context.Background(), contract.OpListarUsuarios, "adm", contract.ListarUsuariosIn{}, &contract.PaginaUsuarios{}); err != nil {
+		t.Errorf("listar = %v", err)
 	}
 }

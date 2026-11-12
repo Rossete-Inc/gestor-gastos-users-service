@@ -154,6 +154,20 @@ func (p *Perfil) Bloquear(agora time.Time) error { return p.MudarStatus(Bloquead
 func (p *Perfil) Reativar(agora time.Time) error { return p.MudarStatus(Ativo, agora) }
 func (p *Perfil) Excluir(agora time.Time) error  { return p.MudarStatus(Excluido, agora) }
 
+// MudarPapel troca o papel. A regra do último admin depende dos outros
+// perfis e fica no app.
+func (p *Perfil) MudarPapel(novo Papel, agora time.Time) error {
+	if !novo.Valido() {
+		return errs.Validation("Papel inválido.", errs.FieldError{Field: "papel", Message: "deve ser cliente ou admin"})
+	}
+	p.Papel = novo
+	p.AtualizadoEm = agora.UTC().Truncate(time.Millisecond)
+	return nil
+}
+
+// AdminAtivo informa se o perfil conta para a regra do último admin.
+func (p Perfil) AdminAtivo() bool { return p.Papel == Admin && p.Status == Ativo }
+
 // Contract converte para o formato do contrato público.
 func (p Perfil) Contract() contract.Perfil {
 	return contract.Perfil{

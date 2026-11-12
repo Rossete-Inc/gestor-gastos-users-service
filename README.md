@@ -6,9 +6,11 @@ Serviço de usuários do Gestor de Gastos (Go, Lambda, DynamoDB). Guarda o perfi
 
 | Pacote | O que faz |
 | --- | --- |
-| `contract` | Contrato público com o BFF: nomes das operações (`ObterPerfil`, `CriarPerfil`), papéis, status e formatos de entrada e saída. É o único pacote fora de `internal/` |
+| `contract` | Contrato público com o BFF: nomes das operações (`ObterPerfil`, `CriarPerfil` e, para o admin, `ListarUsuarios`, `AtualizarUsuario`, `ExcluirUsuario`), papéis, status, códigos de erro e formatos de entrada e saída. É o único pacote fora de `internal/` |
 | `internal/perfil` | Domínio: validação do perfil, papéis (`cliente`, `admin`) e a máquina de estados do ciclo de vida da conta |
-| `internal/app` | Casos de uso: obter perfil, criar perfil de forma idempotente e consumir `UserConfirmed` |
+| `internal/app` | Casos de uso: obter perfil, criar perfil de forma idempotente, consumir `UserConfirmed` e as operações de admin (listar, bloquear, reativar, trocar papel, excluir) |
+| `internal/contas` | Operações de admin no Cognito atrás da interface `Contas`: `Cognito` (API de admin do User Pool) na AWS e `Fake` (memória) no `cmd/local` e nos testes |
+| `internal/memstore` | Store em memória com a semântica do DynamoDB, para os testes |
 | `internal/store` | Store DynamoDB: `PK=USER#<id>`, `SK=PROFILE` e `GSI1` (`USERS`, `<criadoEm>#<id>`) para a listagem do admin |
 | `internal/handler` | Liga os casos de uso ao `invoke.Router` e ao `events.Router` da go-commons, usados pela Lambda e pelo `cmd/local`. `handler.Lambda` junta os dois numa função só |
 | `cmd/lambda` | Entrada da Lambda na AWS (`RUNTIME=aws`), compilada em `dist/lambda/bootstrap` |
@@ -23,6 +25,26 @@ Serviço de usuários do Gestor de Gastos (Go, Lambda, DynamoDB). Guarda o perfi
 - **Criação do perfil:** o perfil nasce `ATIVO`, depois da confirmação do e-mail, pelo evento `UserConfirmed` ou pelo primeiro `/me`. A criação é idempotente: chamar de novo devolve o perfil existente sem alterá-lo, e duas criações simultâneas gravam uma vez só.
 - **Papel no cadastro público:** o evento `UserConfirmed` sempre cria o perfil com o papel `cliente`. O `/me` usa o papel dos grupos do Cognito, então o admin do ambiente local nasce `admin`.
 - **Normalização:** o e-mail é gravado em minúsculas. O nome é gravado sem espaços repetidos e tem no máximo 100 caracteres.
+
+### Operações de admin
+
+O BFF só chama estas operações com o token de quem está no grupo `admin`; o `userId` do envelope é o admin que age.
+
+| Operação | Payload | Resposta | Erros |
+| --- | --- | --- | --- |
+| `ListarUsuarios` | `{"cursor?","limit?"}` | `{"items":[Perfil],"nextCursor?"}`, do mais novo para o mais antigo | 400 `cursor_invalido` |
+| `AtualizarUsuario` | `{"id","status?","papel?"}` (`status`: `ATIVO` ou `BLOQUEADO`) | `Perfil` | 404 `usuario_nao_encontrado`; 422 `validacao`; 409 `transicao_invalida`, `bloquear_a_si_mesmo` ou `ultimo_admin` |
+| `ExcluirUsuario` | `{"id"}` | sem payload | 404 `usuario_nao_encontrado`; 409 `excluir_a_si_mesmo` ou `ultimo_admin` |
+
+- **Cognito primeiro:** o Cognito decide o acesso, e o perfil só espelha papel e status. Cada operação muda o Cognito e depois grava o perfil; se a gravação falhar, repetir conserta.
+- **Bloquear** desabilita a conta e revoga os refresh tokens (`AdminDisableUser` e `AdminUserGlobalSignOut`). O access token já emitido vale até expirar, em no máximo 15 minutos. **Reativar** usa `AdminEnableUser`.
+- **Papel:** a conta entra no grupo do papel novo antes de sair do antigo, e o papel novo vale a partir do próximo login (spec, "Promover a admin").
+- **Último admin:** nenhuma operação pode deixar o sistema sem admin ativo (rebaixar, bloquear ou excluir o último). A contagem não é transacional: dois admins rebaixando um ao outro no mesmo instante passariam; o primeiro admin se recria pela CLI (`docs/primeiro-admin.md` do infra-base).
+- **A si mesmo:** o admin não pode se bloquear nem se excluir. Pode se rebaixar, se houver outro admin ativo.
+- **Exclusão:** apaga a conta no Cognito (conta que já não existe não é erro), marca o perfil como `EXCLUIDO` e publica `UserDeleted`, que apaga gastos e categorias personalizadas nos outros serviços. Excluir de novo um perfil `EXCLUIDO` republica o evento, o que cobre uma falha na publicação. Conta `EXCLUIDO` não muda mais de status nem de papel.
+- **Pedido sem mudança:** pedir o estado que a conta já tem devolve o perfil sem chamar o Cognito.
+- **Cursor:** a chave do GSI1 em base64url, sem assinatura. A listagem é a mesma para qualquer admin e não tem filtro, então adulterar o cursor só mudaria a posição numa lista que o admin já vê inteira. Mesmo assim, a chave é validada campo a campo, e fora do formato vira 400 `cursor_invalido`.
+- **Na Lambda,** bloquear, reativar, trocar papel e excluir só existem com `USER_POOL_ID` e `EVENT_BUS_NAME` definidos (tarefa 10.4). Sem eles, essas operações respondem 400 `operacao_desconhecida` e só a listagem funciona.
 
 ## Rodar localmente
 
@@ -46,6 +68,7 @@ O servidor sobe em http://127.0.0.1:8082 e chama os mesmos handlers da Lambda:
 | `PORT` | `8082` |
 | `DYNAMODB_ENDPOINT` | `http://localhost:8000`; endpoints fora da máquina são recusados |
 | `USERS_TABLE` | `gestor-gastos-users` |
+| `LOCAL_EVENT_TARGETS` | vazio; URLs dos `/events` que recebem o `UserDeleted`, separadas por vírgula (por exemplo `http://localhost:8083/events,http://localhost:8084/events`) |
 | `LOG_LEVEL` | `info` |
 
 **Segurança local:** o `/invoke` confia no `userId` do envelope. Na AWS, só o BFF consegue invocar a Lambda, por IAM. Localmente, o servidor escuta **só em 127.0.0.1**.
@@ -62,6 +85,14 @@ curl -s -X POST localhost:8082/invoke -H 'Content-Type: application/json' \
 # evento de conta confirmada: cria o perfil como cliente e responde 204
 curl -s -o /dev/null -w '%{http_code}\n' -X POST localhost:8082/events -H 'Content-Type: application/json' \
   -d '{"id":"e1","detail-type":"UserConfirmed","source":"curl","time":"2026-11-09T18:30:00Z","detail":{"userId":"u-2","email":"cliente@local.test","nome":"Cliente Local"}}'
+
+# admin: listar, bloquear e excluir (localmente o Cognito é o contas.Fake)
+curl -s -X POST localhost:8082/invoke -H 'Content-Type: application/json' \
+  -d '{"operation":"ListarUsuarios","userId":"u-1","payload":{"limit":20}}'
+curl -s -X POST localhost:8082/invoke -H 'Content-Type: application/json' \
+  -d '{"operation":"AtualizarUsuario","userId":"u-1","payload":{"id":"u-2","status":"BLOQUEADO"}}'
+curl -s -X POST localhost:8082/invoke -H 'Content-Type: application/json' \
+  -d '{"operation":"ExcluirUsuario","userId":"u-1","payload":{"id":"u-2"}}'
 ```
 
 Erros chegam dentro do envelope como problem+json, por exemplo `{"error":{"status":404,"code":"perfil_nao_encontrado",...}}`.

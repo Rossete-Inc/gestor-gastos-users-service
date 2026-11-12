@@ -10,6 +10,7 @@ import (
 	"github.com/Rossete-Inc/gestor-gastos-go-commons/errs"
 	"github.com/Rossete-Inc/gestor-gastos-go-commons/events"
 	"github.com/Rossete-Inc/gestor-gastos-go-commons/invoke"
+	"github.com/Rossete-Inc/gestor-gastos-go-commons/page"
 	"github.com/Rossete-Inc/gestor-gastos-users-service/contract"
 	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/app"
 	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/perfil"
@@ -34,6 +35,40 @@ func Invoke(svc *app.Service, log *slog.Logger) *invoke.Router {
 		p, err := svc.CriarPerfil(ctx, userID, in.Email, in.Nome, perfil.Papel(in.Papel))
 		return p.Contract(), err
 	}))
+
+	r.Handle(contract.OpListarUsuarios, invoke.Typed(func(ctx context.Context, userID string, in contract.ListarUsuariosIn) (contract.PaginaUsuarios, error) {
+		if err := exigirUsuario(userID); err != nil {
+			return contract.PaginaUsuarios{}, err
+		}
+		pg, err := svc.ListarUsuarios(ctx, in.Cursor, in.Limit)
+		if err != nil {
+			return contract.PaginaUsuarios{}, err
+		}
+		itens := make([]contract.Perfil, 0, len(pg.Items))
+		for _, p := range pg.Items {
+			itens = append(itens, p.Contract())
+		}
+		return page.New(itens, pg.NextCursor), nil
+	}))
+
+	// Sem Cognito e barramento (Lambda antes da tarefa 10.4), estas operações
+	// não existem: o router responde 400 "operacao_desconhecida".
+	if svc.AdminHabilitado() {
+		r.Handle(contract.OpAtualizarUsuario, invoke.Typed(func(ctx context.Context, userID string, in contract.AtualizarUsuarioIn) (contract.Perfil, error) {
+			if err := exigirUsuario(userID); err != nil {
+				return contract.Perfil{}, err
+			}
+			p, err := svc.AtualizarUsuario(ctx, userID, in.ID, app.Mudanca{Status: perfil.Status(in.Status), Papel: perfil.Papel(in.Papel)})
+			return p.Contract(), err
+		}))
+
+		r.Handle(contract.OpExcluirUsuario, invoke.Typed(func(ctx context.Context, userID string, in contract.ExcluirUsuarioIn) (any, error) {
+			if err := exigirUsuario(userID); err != nil {
+				return nil, err
+			}
+			return nil, svc.ExcluirUsuario(ctx, userID, in.ID)
+		}))
+	}
 
 	return r
 }

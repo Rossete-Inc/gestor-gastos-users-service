@@ -122,3 +122,46 @@ func TestItensCorrompidos(t *testing.T) {
 		exigeInterno(t, err)
 	})
 }
+
+func TestSalvarEContarErros(t *testing.T) {
+	ctx := context.Background()
+	p := perfilValido(t)
+
+	err := NewDynamo(&fakeAPI{putErr: &types.ConditionalCheckFailedException{}}, "t").Salvar(ctx, p)
+	if e := errs.As(err); e == nil || e.Kind != errs.KindNotFound || e.Code != "perfil_nao_encontrado" {
+		t.Errorf("salvar inexistente = %v", err)
+	}
+	exigeInterno(t, NewDynamo(&fakeAPI{putErr: errors.New("rede")}, "t").Salvar(ctx, p))
+	_, err = NewDynamo(&fakeAPI{queryErr: errors.New("rede")}, "t").ContarAdminsAtivos(ctx)
+	exigeInterno(t, err)
+}
+
+// queriesEmSequencia devolve uma resposta por Query, para testar a
+// continuação da contagem.
+type queriesEmSequencia struct {
+	fakeAPI
+	saidas []*dynamodb.QueryOutput
+	vistos []*dynamodb.QueryInput
+}
+
+func (q *queriesEmSequencia) Query(_ context.Context, in *dynamodb.QueryInput, _ ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error) {
+	copia := *in
+	q.vistos = append(q.vistos, &copia)
+	out := q.saidas[0]
+	q.saidas = q.saidas[1:]
+	return out, nil
+}
+
+func TestContarAdminsAtivosSegueAsContinuacoes(t *testing.T) {
+	q := &queriesEmSequencia{saidas: []*dynamodb.QueryOutput{
+		{Count: 2, LastEvaluatedKey: map[string]types.AttributeValue{"PK": s("USER#x")}},
+		{Count: 1},
+	}}
+	n, err := NewDynamo(q, "t").ContarAdminsAtivos(context.Background())
+	if err != nil || n != 3 || len(q.vistos) != 2 {
+		t.Fatalf("contagem = %d, %v (%d queries)", n, err, len(q.vistos))
+	}
+	if q.vistos[0].Select != types.SelectCount || *q.vistos[0].IndexName != "GSI1" || q.vistos[1].ExclusiveStartKey == nil {
+		t.Errorf("query = %+v", q.vistos[0])
+	}
+}

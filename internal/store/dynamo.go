@@ -186,4 +186,55 @@ func (d *Dynamo) Listar(ctx context.Context, limit int, inicio page.Key) ([]perf
 	return perfis, proxima, nil
 }
 
+// Salvar implementa app.Store: regrava um perfil que já existe. Perfil que
+// não existe vira errs.NotFound("perfil_nao_encontrado"), sem criar nada.
+func (d *Dynamo) Salvar(ctx context.Context, p perfil.Perfil) error {
+	av, err := attributevalue.MarshalMap(paraItem(p))
+	if err != nil {
+		return errs.Internal(fmt.Errorf("serializar perfil: %w", err))
+	}
+	_, err = d.api.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName:           aws.String(d.table),
+		Item:                av,
+		ConditionExpression: aws.String("attribute_exists(PK)"),
+	})
+	var naoExiste *types.ConditionalCheckFailedException
+	switch {
+	case errors.As(err, &naoExiste):
+		return errs.NotFound("perfil_nao_encontrado", "Perfil não encontrado.")
+	case err != nil:
+		return errs.Internal(fmt.Errorf("gravar perfil: %w", err))
+	}
+	return nil
+}
+
+// ContarAdminsAtivos implementa app.Store: percorre o GSI1 contando os
+// perfis admin com status ATIVO. São poucos usuários no MVP; o GSI1 tem
+// projeção ALL, então o filtro não precisa ler a tabela base.
+func (d *Dynamo) ContarAdminsAtivos(ctx context.Context) (int, error) {
+	in := &dynamodb.QueryInput{
+		TableName:                aws.String(d.table),
+		IndexName:                aws.String(gsi1),
+		KeyConditionExpression:   aws.String("GSI1PK = :todos"),
+		FilterExpression:         aws.String("papel = :admin AND #status = :ativo"),
+		ExpressionAttributeNames: map[string]string{"#status": "status"}, // palavra reservada
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":todos": s(gsi1PKTodos), ":admin": s(string(perfil.Admin)), ":ativo": s(string(perfil.Ativo)),
+		},
+		Select: types.SelectCount,
+	}
+	total := 0
+	for {
+		out, err := d.api.Query(ctx, in)
+		if err != nil {
+			return 0, errs.Internal(fmt.Errorf("contar admins ativos: %w", err))
+		}
+		total += int(out.Count)
+		if len(out.LastEvaluatedKey) == 0 {
+			return total, nil
+		}
+		in.ExclusiveStartKey = out.LastEvaluatedKey
+	}
+}
+
 func s(v string) types.AttributeValue { return &types.AttributeValueMemberS{Value: v} }
