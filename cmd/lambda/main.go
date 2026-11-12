@@ -15,8 +15,8 @@
 //	LOG_LEVEL=info       opcional
 //
 // USER_POOL_ID e EVENT_BUS_NAME ligam as operações de admin (bloquear,
-// reativar, trocar papel, excluir) e vêm juntos; até o CDK defini-los
-// (tarefa 10.4), a função atende só o perfil e a listagem de usuários.
+// reativar, trocar papel, excluir) e vêm juntos. O CDK define os dois
+// (tarefa 10.4); sem eles, a função atende só o perfil e a listagem.
 //
 // Build (o mesmo do go-service.yml):
 //
@@ -47,8 +47,10 @@ import (
 
 const (
 	servico = "users-service"
-	// fonteDosEventos é o source dos eventos publicados (UserDeleted).
-	fonteDosEventos = "gestor-gastos.users-service"
+	// fonteDosEventos é o source dos eventos publicados (UserDeleted). As
+	// regras do expenses-service e do categories-service filtram por ele
+	// (SourceUsers no infra de cada um).
+	fonteDosEventos = "gestor-gastos.users"
 )
 
 // Config é a configuração da Lambda.

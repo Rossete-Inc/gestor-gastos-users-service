@@ -38,18 +38,21 @@ func (f *ssmFalso) GetParameters(_ context.Context, in *ssm.GetParametersInput, 
 
 func TestLerParametrosSSM(t *testing.T) {
 	api := &ssmFalso{valores: map[string]string{
-		"/gestor-gastos/dev/events/bus-name": busTeste,
-		"/gestor-gastos/dev/events/dlq-arn":  dlqTeste,
+		"/gestor-gastos/dev/events/bus-name":    busTeste,
+		"/gestor-gastos/dev/events/dlq-arn":     dlqTeste,
+		"/gestor-gastos/dev/auth/user-pool-id":  poolIDTeste,
+		"/gestor-gastos/dev/auth/user-pool-arn": poolArnTeste,
 	}}
 	p, err := LerParametrosSSM(context.Background(), api, "dev")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p[ParamBusName] != busTeste || p[ParamDlqArn] != dlqTeste {
+	if p[ParamBusName] != busTeste || p[ParamDlqArn] != dlqTeste ||
+		p[ParamUserPoolID] != poolIDTeste || p[ParamUserPoolArn] != poolArnTeste {
 		t.Errorf("parâmetros = %v", p)
 	}
-	if len(api.pedidos) != 2 {
-		t.Errorf("esperava uma leitura com os 2 nomes, pedidos = %v", api.pedidos)
+	if len(api.pedidos) != 4 {
+		t.Errorf("esperava uma leitura com os 4 nomes, pedidos = %v", api.pedidos)
 	}
 }
 
@@ -64,6 +67,8 @@ func TestLerParametrosSSMFaltando(t *testing.T) {
 		"faltam parâmetros no SSM",
 		"/gestor-gastos/dev/events/dlq-arn",
 		"gestor-gastos-dev-events do gestor-gastos-infra-base",
+		"/gestor-gastos/dev/auth/user-pool-arn",
+		"gestor-gastos-dev-auth do gestor-gastos-infra-base",
 		"gestor-gastos-dev-users",
 		"aws ssm get-parameters-by-path --path /gestor-gastos/dev",
 	} {
@@ -121,8 +126,10 @@ func TestDeveLerSsm(t *testing.T) {
 func TestParametrosDoSynth(t *testing.T) {
 	ctx := context.Background()
 	api := &ssmFalso{valores: map[string]string{
-		"/gestor-gastos/dev/events/bus-name": busTeste,
-		"/gestor-gastos/dev/events/dlq-arn":  dlqTeste,
+		"/gestor-gastos/dev/events/bus-name":    busTeste,
+		"/gestor-gastos/dev/events/dlq-arn":     dlqTeste,
+		"/gestor-gastos/dev/auth/user-pool-id":  poolIDTeste,
+		"/gestor-gastos/dev/auth/user-pool-arn": poolArnTeste,
 	}}
 	novo := func(context.Context) (SSMAPI, error) { return api, nil }
 

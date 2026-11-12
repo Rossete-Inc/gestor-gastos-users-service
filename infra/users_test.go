@@ -14,11 +14,16 @@ import (
 )
 
 const (
-	busTeste = "gestor-gastos-dev"
-	dlqTeste = "arn:aws:sqs:us-east-1:123456789012:gestor-gastos-dev-events-dlq"
+	busTeste     = "gestor-gastos-dev"
+	dlqTeste     = "arn:aws:sqs:us-east-1:123456789012:gestor-gastos-dev-events-dlq"
+	poolIDTeste  = "us-east-1_AbCdEf123"
+	poolArnTeste = "arn:aws:cognito-idp:us-east-1:123456789012:userpool/us-east-1_AbCdEf123"
 )
 
-var paramsTeste = Parametros{ParamBusName: busTeste, ParamDlqArn: dlqTeste}
+var paramsTeste = Parametros{
+	ParamBusName: busTeste, ParamDlqArn: dlqTeste,
+	ParamUserPoolID: poolIDTeste, ParamUserPoolArn: poolArnTeste,
+}
 
 // codigoTeste cria um bootstrap falso e o empacota como no synth de verdade.
 func codigoTeste(t *testing.T) awslambda.Code {
@@ -236,16 +241,53 @@ func TestPermissoesDaFuncao(t *testing.T) {
 		},
 	})
 
-	// Nada de Cognito nem PutEvents nesta fatia (chegam na 10.1/10.5).
+	// Operações de admin (tarefa 10.4): Cognito Admin só no pool do ambiente
+	// e PutEvents só no barramento.
+	acoes := make([]interface{}, len(AcoesCognitoAdmin))
+	for i, a := range AcoesCognitoAdmin {
+		acoes[i] = a
+	}
+	tpl.HasResourceProperties(jsii.String("AWS::IAM::Policy"), map[string]interface{}{
+		"PolicyDocument": map[string]interface{}{
+			"Statement": assertions.Match_ArrayWith(&[]interface{}{
+				map[string]interface{}{
+					"Sid": "CognitoAdminNoPool", "Effect": "Allow",
+					"Action": acoes, "Resource": poolArnTeste,
+				},
+				assertions.Match_ObjectLike(&map[string]interface{}{
+					"Action":   "events:PutEvents",
+					"Effect":   "Allow",
+					"Resource": assertions.Match_ObjectLike(&map[string]interface{}{"Fn::Join": assertions.Match_AnyValue()}),
+				}),
+			}),
+		},
+	})
+
+	// Nada além disso: sem curinga de pool, sem outras ações do Cognito.
 	politicas, err := json.Marshal(tpl.FindResources(jsii.String("AWS::IAM::Policy"), nil))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, acao := range []string{"cognito-idp:", "events:PutEvents"} {
-		if strings.Contains(string(politicas), acao) {
-			t.Errorf("a função não deveria ter %s", acao)
+	if !strings.Contains(string(politicas), ":event-bus/"+busTeste+`"`) {
+		t.Errorf("PutEvents fora do barramento %s: %s", busTeste, politicas)
+	}
+	for _, proibido := range []string{"userpool/*", "cognito-idp:*", "cognito-idp:AdminCreateUser", "cognito-idp:AdminSetUserPassword"} {
+		if strings.Contains(string(politicas), proibido) {
+			t.Errorf("a função não deveria ter %s", proibido)
 		}
 	}
+}
+
+func TestVariaveisDasOperacoesDeAdmin(t *testing.T) {
+	tpl := novaStackTeste(t, paramsTeste)
+	tpl.HasResourceProperties(jsii.String("AWS::Lambda::Function"), map[string]interface{}{
+		"Environment": map[string]interface{}{
+			"Variables": assertions.Match_ObjectLike(&map[string]interface{}{
+				"USER_POOL_ID":   poolIDTeste,
+				"EVENT_BUS_NAME": busTeste,
+			}),
+		},
+	})
 }
 
 func TestPublicaArnDoAliasENomeDaTabelaNoSsm(t *testing.T) {
