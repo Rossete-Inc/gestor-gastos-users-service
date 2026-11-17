@@ -49,6 +49,8 @@ func UsersTable(t *testing.T, prefixo string) (*dynamodb.Client, string) {
 			{AttributeName: aws.String("SK"), AttributeType: types.ScalarAttributeTypeS},
 			{AttributeName: aws.String("GSI1PK"), AttributeType: types.ScalarAttributeTypeS},
 			{AttributeName: aws.String("GSI1SK"), AttributeType: types.ScalarAttributeTypeS},
+			{AttributeName: aws.String("GSI2PK"), AttributeType: types.ScalarAttributeTypeS},
+			{AttributeName: aws.String("GSI2SK"), AttributeType: types.ScalarAttributeTypeS},
 		},
 		KeySchema: []types.KeySchemaElement{
 			{AttributeName: aws.String("PK"), KeyType: types.KeyTypeHash},
@@ -59,6 +61,13 @@ func UsersTable(t *testing.T, prefixo string) (*dynamodb.Client, string) {
 			KeySchema: []types.KeySchemaElement{
 				{AttributeName: aws.String("GSI1PK"), KeyType: types.KeyTypeHash},
 				{AttributeName: aws.String("GSI1SK"), KeyType: types.KeyTypeRange},
+			},
+			Projection: &types.Projection{ProjectionType: types.ProjectionTypeAll},
+		}, {
+			IndexName: aws.String("GSI2"),
+			KeySchema: []types.KeySchemaElement{
+				{AttributeName: aws.String("GSI2PK"), KeyType: types.KeyTypeHash},
+				{AttributeName: aws.String("GSI2SK"), KeyType: types.KeyTypeRange},
 			},
 			Projection: &types.Projection{ProjectionType: types.ProjectionTypeAll},
 		}},

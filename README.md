@@ -6,12 +6,13 @@ Serviço de usuários do Gestor de Gastos (Go, Lambda, DynamoDB). Guarda o perfi
 
 | Pacote | O que faz |
 | --- | --- |
-| `contract` | Contrato público com o BFF: nomes das operações (`ObterPerfil`, `CriarPerfil` e, para o admin, `ListarUsuarios`, `AtualizarUsuario`, `ExcluirUsuario`), papéis, status, códigos de erro e formatos de entrada e saída. É o único pacote fora de `internal/` |
+| `contract` | Contrato público com o BFF: nomes das operações (`ObterPerfil`, `CriarPerfil` e, para o admin, `ListarUsuarios`, `AtualizarUsuario`, `ExcluirUsuario`, e as de colaboração), papéis, status, códigos de erro e formatos de entrada e saída. É o único pacote fora de `internal/` |
 | `internal/perfil` | Domínio: validação do perfil, papéis (`cliente`, `admin`) e a máquina de estados do ciclo de vida da conta |
 | `internal/app` | Casos de uso: obter perfil, criar perfil de forma idempotente, consumir `UserConfirmed` e as operações de admin (listar, bloquear, reativar, trocar papel, excluir) |
 | `internal/contas` | Operações de admin no Cognito atrás da interface `Contas`: `Cognito` (API de admin do User Pool) na AWS e `Fake` (memória) no `cmd/local` e nos testes |
 | `internal/memstore` | Store em memória com a semântica do DynamoDB, para os testes |
-| `internal/store` | Store DynamoDB: `PK=USER#<id>`, `SK=PROFILE` e `GSI1` (`USERS`, `<criadoEm>#<id>`) para a listagem do admin |
+| `internal/colaboracao` | Domínio dos colaboradores (ADR 0010): papéis Editor e Leitor, convite por e-mail normalizado e limite de 5 |
+| `internal/store` | Store DynamoDB: `PK=USER#<id>`, `SK=PROFILE` e `GSI1` (`USERS`, `<criadoEm>#<id>`) para a listagem do admin; membros e convites em `PK=CONTA#<donoId>`, com o `GSI2` |
 | `internal/handler` | Liga os casos de uso ao `invoke.Router` e ao `events.Router` da go-commons, usados pela Lambda e pelo `cmd/local`. `handler.Lambda` junta os dois numa função só |
 | `cmd/lambda` | Entrada da Lambda na AWS (`RUNTIME=aws`), compilada em `dist/lambda/bootstrap` |
 | `cmd/local` | Servidor HTTP local que chama os mesmos handlers da Lambda (ver "Rodar localmente") |
@@ -46,6 +47,33 @@ O BFF só chama estas operações com o token de quem está no grupo `admin`; o 
 - **Cursor:** a chave do GSI1 em base64url, sem assinatura. A listagem é a mesma para qualquer admin e não tem filtro, então adulterar o cursor só mudaria a posição numa lista que o admin já vê inteira. Mesmo assim, a chave é validada campo a campo, e fora do formato vira 400 `cursor_invalido`.
 - **Na Lambda,** bloquear, reativar, trocar papel e excluir só existem com `USER_POOL_ID` e `EVENT_BUS_NAME` definidos, o que o CDK faz desde a tarefa 10.4. Sem eles, essas operações respondem 400 `operacao_desconhecida` e só a listagem funciona.
 - **Evento:** o `UserDeleted` sai com `source=gestor-gastos.users`, o que as regras do expenses-service e do categories-service filtram.
+- **Colaborações:** a exclusão apaga também a conta compartilhada do usuário (membros e convites) e as participações dele em outras contas, antes de publicar o evento.
+
+### Colaboradores (ADR 0010)
+
+O dono convida pessoas, como `EDITOR` ou `LEITOR`, para a conta dele. O BFF confere o acesso com `ObterAcesso` em cada requisição a uma conta alheia (cabeçalho `X-Conta`) e chama os serviços de dados com o `userId` do dono. O `userId` do envelope é sempre quem age; o e-mail do convidado é o verificado do token, que o BFF lê no Cognito.
+
+| Operação | Payload | Resposta | Erros |
+| --- | --- | --- | --- |
+| `ObterAcesso` | `{"donoId"}` | `{"donoId","papel"}` (`DONO`, `EDITOR` ou `LEITOR`) | 404 `conta_nao_encontrada` |
+| `ListarColaboradores` | `{}` | `{"membros":[Colaborador],"convites":[Convite]}` | — |
+| `Convidar` | `{"email","papel"}` | `Convite` | 422 `validacao` (`email`, inclusive o próprio, `papel`); 409 `ja_colaborador`, `convite_existente`, `limite_colaboradores` |
+| `CancelarConvite` | `{"email"}` | sem payload | 404 `convite_nao_encontrado` |
+| `ListarConvitesRecebidos` | `{"email"}` | `{"items":[Convite]}` | 422 `validacao` |
+| `AceitarConvite` | `{"donoId","email"}` | `{"donoId","nomeDono","papel"}` | 404 `convite_nao_encontrado` |
+| `RecusarConvite` | `{"donoId","email"}` | sem payload | 404 `convite_nao_encontrado` |
+| `MudarPapel` | `{"userId","papel"}` | `Colaborador` | 422 `validacao`; 404 `colaborador_nao_encontrado` |
+| `RemoverColaborador` | `{"userId"}` | sem payload | 404 `colaborador_nao_encontrado` |
+| `SairDaConta` | `{"donoId"}` | sem payload | 404 `conta_nao_encontrada` |
+| `ListarMinhasContas` | `{}` | `{"items":[{"donoId","nomeDono","papel"}]}` | — |
+| `NomesDe` | `{"ids":[...]}` (até 100) | `{"nomes":{"<id>":"<nome>"}}`, sem os IDs sem perfil | 422 `validacao` |
+
+`Colaborador` é `{"userId","nome","email","papel","desde"}` e `Convite` é `{"donoId","nomeDono","email","papel","criadoEm"}`.
+
+- **Limite:** membros mais convites pendentes somam até 5 por conta. A contagem lê a partição `CONTA#`; dois convites simultâneos podem passar, o que é aceito.
+- **E-mail:** sem espaços nas pontas e em minúsculas. Não se convida o próprio e-mail, quem já é membro nem um e-mail com convite pendente.
+- **Aceite:** apaga o convite e grava o membro numa transação; o convite só vale para quem tem aquele e-mail verificado.
+- **Chaves:** membro `PK=CONTA#<donoId>`, `SK=MEMBRO#<userId>`, `GSI2PK=MEMBRO#<userId>`; convite `SK=CONVITE#<email>`, `GSI2PK=EMAIL#<email>`; os dois com `GSI2SK=CONTA#<donoId>`.
 
 ## Rodar localmente
 
@@ -136,7 +164,7 @@ Stack `gestor-gastos-dev-users` (`infra/`), implantada pela esteira a cada merge
 
 | Recurso | Configuração |
 | --- | --- |
-| Tabela `gestor-gastos-dev-users` | DynamoDB on-demand, `PK`/`SK` e `GSI1` (`GSI1PK`/`GSI1SK`, projeção ALL), como `internal/store`. `RemovalPolicy: RETAIN`: apagar a stack não apaga os perfis |
+| Tabela `gestor-gastos-dev-users` | DynamoDB on-demand, `PK`/`SK`, `GSI1` (`GSI1PK`/`GSI1SK`) e `GSI2` (`GSI2PK`/`GSI2SK`, colaboração), com projeção ALL, como `internal/store`. `RemovalPolicy: RETAIN`: apagar a stack não apaga os perfis |
 | Lambda `gestor-gastos-dev-users` | `provided.al2023`, arm64, 256 MB, timeout de 10 s, sem VPC. Variáveis `RUNTIME=aws`, `ENV=dev`, `USERS_TABLE`, `LOG_LEVEL`, `USER_POOL_ID` e `EVENT_BUS_NAME`. Permissões: leitura e escrita só na tabela; `AdminDisableUser`, `AdminEnableUser`, `AdminUserGlobalSignOut`, `AdminAddUserToGroup`, `AdminRemoveUserFromGroup` e `AdminDeleteUser` só no ARN do User Pool do ambiente; `events:PutEvents` só no barramento (`UserDeleted`) |
 | Alias `live` | O que o BFF invoca e a regra do EventBridge aciona |
 | CodeDeploy | Canary `LambdaCanary10Percent5Minutes`: a versão nova recebe 10% do tráfego do `live` por 5 minutos e depois 100%. Rollback automático se o deploy falhar ou se o alarme `gestor-gastos-dev-users-erros` (erros no alias ≥ 1 em 1 minuto) disparar |

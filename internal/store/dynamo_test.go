@@ -21,6 +21,16 @@ type fakeAPI struct {
 	getItem  map[string]types.AttributeValue
 	queryErr error
 	queryOut *dynamodb.QueryOutput
+	delErr   error
+	txErr    error
+}
+
+func (f *fakeAPI) DeleteItem(context.Context, *dynamodb.DeleteItemInput, ...func(*dynamodb.Options)) (*dynamodb.DeleteItemOutput, error) {
+	return &dynamodb.DeleteItemOutput{}, f.delErr
+}
+
+func (f *fakeAPI) TransactWriteItems(context.Context, *dynamodb.TransactWriteItemsInput, ...func(*dynamodb.Options)) (*dynamodb.TransactWriteItemsOutput, error) {
+	return &dynamodb.TransactWriteItemsOutput{}, f.txErr
 }
 
 func (f *fakeAPI) GetItem(context.Context, *dynamodb.GetItemInput, ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error) {

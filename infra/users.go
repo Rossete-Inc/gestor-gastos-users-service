@@ -108,7 +108,8 @@ func NovaStackUsers(scope constructs.Construct, id string, props *UsersProps) aw
 }
 
 // novaTabela cria a tabela no formato de internal/store: PK=USER#<id>,
-// SK=PROFILE e GSI1 (GSI1PK=USERS, GSI1SK=<criadoEm>#<id>) com projeção ALL.
+// SK=PROFILE, GSI1 (GSI1PK=USERS, GSI1SK=<criadoEm>#<id>) e GSI2 (colaboração),
+// com projeção ALL.
 // On-demand: sem custo parada além do armazenamento. RETAIN: apagar a stack
 // não apaga os perfis.
 func novaTabela(stack awscdk.Stack, nome string) awsdynamodb.Table {
@@ -126,6 +127,15 @@ func novaTabela(stack awscdk.Stack, nome string) awsdynamodb.Table {
 		IndexName:      jsii.String("GSI1"),
 		PartitionKey:   texto("GSI1PK"),
 		SortKey:        texto("GSI1SK"),
+		ProjectionType: awsdynamodb.ProjectionType_ALL,
+	})
+	// GSI2 (colaboradores, ADR 0010): GSI2PK=MEMBRO#<userId> ou EMAIL#<email>
+	// e GSI2SK=CONTA#<donoId> respondem "de quais contas participo" e "quais
+	// convites recebi".
+	tabela.AddGlobalSecondaryIndex(&awsdynamodb.GlobalSecondaryIndexProps{
+		IndexName:      jsii.String("GSI2"),
+		PartitionKey:   texto("GSI2PK"),
+		SortKey:        texto("GSI2SK"),
 		ProjectionType: awsdynamodb.ProjectionType_ALL,
 	})
 	return tabela

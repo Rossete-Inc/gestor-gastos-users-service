@@ -2,7 +2,8 @@
 //
 // Chaves (contrato com o CDK e com o seed do infra-base, docs/local.md):
 // PK=USER#<id>, SK=PROFILE e GSI1 com GSI1PK=USERS e GSI1SK=<criadoEm>#<id>
-// para a listagem do admin.
+// para a listagem do admin. Membros e convites das contas compartilhadas
+// ficam na mesma tabela, com o GSI2 (colaboracao.go).
 package store
 
 import (
@@ -36,6 +37,8 @@ type API interface {
 	GetItem(ctx context.Context, in *dynamodb.GetItemInput, opt ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error)
 	PutItem(ctx context.Context, in *dynamodb.PutItemInput, opt ...func(*dynamodb.Options)) (*dynamodb.PutItemOutput, error)
 	Query(ctx context.Context, in *dynamodb.QueryInput, opt ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error)
+	DeleteItem(ctx context.Context, in *dynamodb.DeleteItemInput, opt ...func(*dynamodb.Options)) (*dynamodb.DeleteItemOutput, error)
+	TransactWriteItems(ctx context.Context, in *dynamodb.TransactWriteItemsInput, opt ...func(*dynamodb.Options)) (*dynamodb.TransactWriteItemsOutput, error)
 }
 
 // Dynamo implementa app.Store.
