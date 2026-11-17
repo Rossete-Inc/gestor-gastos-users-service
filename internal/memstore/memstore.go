@@ -11,6 +11,7 @@ import (
 
 	"github.com/Rossete-Inc/gestor-gastos-go-commons/errs"
 	"github.com/Rossete-Inc/gestor-gastos-go-commons/page"
+	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/colaboracao"
 	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/perfil"
 )
 
@@ -18,6 +19,9 @@ import (
 type Store struct {
 	mu     sync.Mutex
 	perfis map[string]perfil.Perfil
+	// membros e convites por conta (donoId) e por userId ou e-mail.
+	membros  map[string]map[string]colaboracao.Membro
+	convites map[string]map[string]colaboracao.Convite
 	// Criados conta os perfis criados de fato (não os já existentes).
 	Criados int
 	// Err, se não nil, é devolvido por todas as operações.
@@ -25,7 +29,13 @@ type Store struct {
 }
 
 // New cria um Store vazio.
-func New() *Store { return &Store{perfis: map[string]perfil.Perfil{}} }
+func New() *Store {
+	return &Store{
+		perfis:   map[string]perfil.Perfil{},
+		membros:  map[string]map[string]colaboracao.Membro{},
+		convites: map[string]map[string]colaboracao.Convite{},
+	}
+}
 
 func naoEncontrado() error { return errs.NotFound("perfil_nao_encontrado", "Perfil não encontrado.") }
 

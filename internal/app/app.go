@@ -14,7 +14,7 @@ import (
 	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/perfil"
 )
 
-// Store persiste perfis.
+// Store persiste perfis e as colaborações.
 type Store interface {
 	// Criar grava o perfil só se ainda não existir. Se já existir, devolve o
 	// perfil gravado e criado=false, sem alterá-lo.
@@ -29,6 +29,8 @@ type Store interface {
 	Salvar(ctx context.Context, p perfil.Perfil) error
 	// ContarAdminsAtivos conta os perfis admin com status ATIVO.
 	ContarAdminsAtivos(ctx context.Context) (int, error)
+
+	Colaboracoes
 }
 
 // errAdminDesligado só aparece se o handler expuser uma operação de admin

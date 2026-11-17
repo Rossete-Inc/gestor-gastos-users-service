@@ -157,7 +157,7 @@ func (s *Service) AtualizarUsuario(ctx context.Context, adminID, id string, m Mu
 }
 
 // ExcluirUsuario remove o acesso na hora (Cognito), marca o perfil como
-// EXCLUIDO e publica UserDeleted, que apaga gastos e categorias do usuário
+// EXCLUIDO, encerra as colaborações e publica UserDeleted, que apaga gastos e categorias do usuário
 // nos outros serviços (cenário "Admin exclui usuário"). Repetir a exclusão
 // de um perfil já EXCLUIDO republica o evento: cobre a falha na publicação.
 func (s *Service) ExcluirUsuario(ctx context.Context, adminID, id string) error {
@@ -185,6 +185,15 @@ func (s *Service) ExcluirUsuario(ctx context.Context, adminID, id string) error 
 		if err := s.salvarAlvo(ctx, novo); err != nil {
 			return err
 		}
+	}
+	// A exclusão encerra as colaborações: a conta dele (membros e convites)
+	// e as participações em outras contas (spec colaboracao).
+	n, err := s.store.ExcluirColaboracoesDe(ctx, atual.ID)
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		s.log.InfoContext(ctx, "colaborações encerradas", "userId", atual.ID, "itens", n)
 	}
 	if err := s.eventos.Publish(ctx, events.UserDeleted, events.UserDeletedDetail{UserID: atual.ID}); err != nil {
 		return errs.Internal(err)

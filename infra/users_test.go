@@ -95,6 +95,14 @@ func TestTabelaOnDemandComRetain(t *testing.T) {
 					},
 					"Projection": map[string]interface{}{"ProjectionType": "ALL"},
 				},
+				map[string]interface{}{
+					"IndexName": "GSI2",
+					"KeySchema": []interface{}{
+						map[string]interface{}{"AttributeName": "GSI2PK", "KeyType": "HASH"},
+						map[string]interface{}{"AttributeName": "GSI2SK", "KeyType": "RANGE"},
+					},
+					"Projection": map[string]interface{}{"ProjectionType": "ALL"},
+				},
 			},
 		},
 	})

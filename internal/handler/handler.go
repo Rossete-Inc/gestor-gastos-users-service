@@ -51,6 +51,8 @@ func Invoke(svc *app.Service, log *slog.Logger) *invoke.Router {
 		return page.New(itens, pg.NextCursor), nil
 	}))
 
+	colaboracaoNoRouter(r, svc)
+
 	// Sem Cognito e barramento (Lambda antes da tarefa 10.4), estas operações
 	// não existem: o router responde 400 "operacao_desconhecida".
 	if svc.AdminHabilitado() {
