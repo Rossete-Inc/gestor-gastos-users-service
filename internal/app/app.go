@@ -11,6 +11,7 @@ import (
 	"github.com/Rossete-Inc/gestor-gastos-go-commons/events"
 	"github.com/Rossete-Inc/gestor-gastos-go-commons/page"
 	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/contas"
+	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/notificacao"
 	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/perfil"
 )
 
@@ -31,6 +32,7 @@ type Store interface {
 	ContarAdminsAtivos(ctx context.Context) (int, error)
 
 	Colaboracoes
+	Assinaturas
 }
 
 // errAdminDesligado só aparece se o handler expuser uma operação de admin
@@ -44,6 +46,7 @@ type Service struct {
 	agora   func() time.Time
 	contas  contas.Contas
 	eventos events.Publisher
+	push    notificacao.Enviador
 }
 
 // New cria o Service. log nil usa slog.Default().

@@ -76,22 +76,10 @@ func NovaStackUsers(scope constructs.Construct, id string, props *UsersProps) aw
 	novoCanary(stack, nome, alias)
 
 	barramento := awsevents.EventBus_FromEventBusName(stack, jsii.String("Barramento"), jsii.String(params[ParamBusName]))
-	awsevents.NewRule(stack, jsii.String("UserConfirmed"), &awsevents.RuleProps{
-		RuleName:    jsii.String(nome + "-user-confirmed"),
-		Description: jsii.String("UserConfirmed do trigger Post Confirmation: cria o perfil no users-service"),
-		EventBus:    barramento,
-		EventPattern: &awsevents.EventPattern{
-			Source:     jsii.Strings(SourceAuth),
-			DetailType: jsii.Strings(DetailTypeUserConfirmed),
-		},
-		Targets: &[]awsevents.IRuleTarget{
-			awseventstargets.NewLambdaFunction(alias, &awseventstargets.LambdaFunctionProps{
-				DeadLetterQueue: dlq,
-				RetryAttempts:   jsii.Number(8),
-				MaxEventAge:     awscdk.Duration_Hours(jsii.Number(2)),
-			}),
-		},
-	})
+	novaRegra(stack, barramento, alias, dlq, "UserConfirmed", nome+"-user-confirmed",
+		"UserConfirmed do trigger Post Confirmation: cria o perfil no users-service", SourceAuth, DetailTypeUserConfirmed)
+	novaRegra(stack, barramento, alias, dlq, "MetasAtingidas", nome+"-metas-atingidas",
+		"MetasAtingidas do expenses-service: envia o Web Push à conta (ADR 0011)", SourceExpenses, DetailTypeMetasAtingidas)
 
 	publicarParametro(stack, env, ParamFunctionArn, *alias.FunctionArn(),
 		"ARN do alias live da Lambda do users-service, invocado pelo BFF")
@@ -105,6 +93,27 @@ func NovaStackUsers(scope constructs.Construct, id string, props *UsersProps) aw
 	})
 
 	return stack
+}
+
+// novaRegra liga um evento do barramento ao alias live, com retentativas e a
+// DLQ do barramento para falhas de entrega.
+func novaRegra(stack awscdk.Stack, barramento awsevents.IEventBus, alias awslambda.Alias, dlq awssqs.IQueue, id, nome, descricao, source, detailType string) {
+	awsevents.NewRule(stack, jsii.String(id), &awsevents.RuleProps{
+		RuleName:    jsii.String(nome),
+		Description: jsii.String(descricao),
+		EventBus:    barramento,
+		EventPattern: &awsevents.EventPattern{
+			Source:     jsii.Strings(source),
+			DetailType: jsii.Strings(detailType),
+		},
+		Targets: &[]awsevents.IRuleTarget{
+			awseventstargets.NewLambdaFunction(alias, &awseventstargets.LambdaFunctionProps{
+				DeadLetterQueue: dlq,
+				RetryAttempts:   jsii.Number(8),
+				MaxEventAge:     awscdk.Duration_Hours(jsii.Number(2)),
+			}),
+		},
+	})
 }
 
 // novaTabela cria a tabela no formato de internal/store: PK=USER#<id>,
@@ -152,7 +161,7 @@ func novaFuncao(stack awscdk.Stack, env, nome string, codigo awslambda.Code, tab
 
 	fn := awslambda.NewFunction(stack, jsii.String("Funcao"), &awslambda.FunctionProps{
 		FunctionName: jsii.String(nome),
-		Description:  jsii.String("users-service: invoke do BFF e consumidor de UserConfirmed"),
+		Description:  jsii.String("users-service: invoke do BFF e consumidor de UserConfirmed e MetasAtingidas"),
 		Runtime:      awslambda.Runtime_PROVIDED_AL2023(),
 		Architecture: awslambda.Architecture_ARM_64(),
 		Handler:      jsii.String("bootstrap"),
@@ -168,9 +177,26 @@ func novaFuncao(stack awscdk.Stack, env, nome string, codigo awslambda.Code, tab
 			// Os dois juntos ligam as operações de admin (cmd/lambda).
 			"USER_POOL_ID":   jsii.String(params[ParamUserPoolID]),
 			"EVENT_BUS_NAME": jsii.String(params[ParamBusName]),
+			// Os dois juntos ligam o Web Push (ADR 0011).
+			"VAPID_PUBLIC_PARAM":  jsii.String(CaminhoSSM(env, ParamVAPIDPublica)),
+			"VAPID_PRIVATE_PARAM": jsii.String(CaminhoSSM(env, ParamVAPIDPrivada)),
 		},
 	})
 	tabela.GrantReadWriteData(fn)
+	// Lê só as duas chaves do Web Push. A privada é SecureString com a chave
+	// gerenciada aws/ssm, que dispensa kms:Decrypt na política.
+	chaves := []string{}
+	for _, p := range []string{ParamVAPIDPublica, ParamVAPIDPrivada} {
+		chaves = append(chaves, *stack.FormatArn(&awscdk.ArnComponents{
+			Service: jsii.String("ssm"), Resource: jsii.String("parameter"),
+			ResourceName: jsii.String(CaminhoSSM(env, p)[1:]),
+		}))
+	}
+	fn.AddToRolePolicy(awsiam.NewPolicyStatement(&awsiam.PolicyStatementProps{
+		Sid:       jsii.String("ChavesVAPID"),
+		Actions:   jsii.Strings("ssm:GetParameter"),
+		Resources: jsii.Strings(chaves...),
+	}))
 
 	return awslambda.NewAlias(stack, jsii.String("Live"), &awslambda.AliasProps{
 		AliasName:   jsii.String(AliasLive),

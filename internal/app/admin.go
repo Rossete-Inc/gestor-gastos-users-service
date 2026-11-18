@@ -195,6 +195,13 @@ func (s *Service) ExcluirUsuario(ctx context.Context, adminID, id string) error 
 	if n > 0 {
 		s.log.InfoContext(ctx, "colaborações encerradas", "userId", atual.ID, "itens", n)
 	}
+	// Os aparelhos dele deixam de receber notificações (ADR 0011).
+	if n, err = s.store.ExcluirAssinaturasDe(ctx, atual.ID); err != nil {
+		return err
+	}
+	if n > 0 {
+		s.log.InfoContext(ctx, "assinaturas push apagadas", "userId", atual.ID, "aparelhos", n)
+	}
 	if err := s.eventos.Publish(ctx, events.UserDeleted, events.UserDeletedDetail{UserID: atual.ID}); err != nil {
 		return errs.Internal(err)
 	}
