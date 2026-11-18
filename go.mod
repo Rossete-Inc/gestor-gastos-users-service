@@ -4,6 +4,7 @@ go 1.27.0
 
 require (
 	github.com/Rossete-Inc/gestor-gastos-go-commons v0.1.0
+	github.com/SherClockHolmes/webpush-go v1.4.0
 	github.com/aws/aws-lambda-go v1.55.1
 	github.com/aws/aws-sdk-go-v2 v1.48.0
 	github.com/aws/aws-sdk-go-v2/config v1.33.17
@@ -30,4 +31,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.44.4 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.51.9 // indirect
 	github.com/aws/smithy-go v1.28.9 // indirect
+	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
+	golang.org/x/crypto v0.31.0 // indirect
 )
