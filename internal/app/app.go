@@ -31,6 +31,7 @@ type Store interface {
 	ContarAdminsAtivos(ctx context.Context) (int, error)
 
 	Colaboracoes
+	Assinaturas
 }
 
 // errAdminDesligado só aparece se o handler expuser uma operação de admin

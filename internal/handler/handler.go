@@ -52,6 +52,7 @@ func Invoke(svc *app.Service, log *slog.Logger) *invoke.Router {
 	}))
 
 	colaboracaoNoRouter(r, svc)
+	pushNoRouter(r, svc)
 
 	// Sem Cognito e barramento (Lambda antes da tarefa 10.4), estas operações
 	// não existem: o router responde 400 "operacao_desconhecida".

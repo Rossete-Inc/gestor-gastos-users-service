@@ -13,6 +13,7 @@ import (
 	"github.com/Rossete-Inc/gestor-gastos-go-commons/page"
 	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/colaboracao"
 	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/perfil"
+	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/push"
 )
 
 // Store guarda os perfis por ID.
@@ -22,6 +23,8 @@ type Store struct {
 	// membros e convites por conta (donoId) e por userId ou e-mail.
 	membros  map[string]map[string]colaboracao.Membro
 	convites map[string]map[string]colaboracao.Convite
+	// assinaturas push por usuário e ID.
+	assinaturas map[string]map[string]push.Assinatura
 	// Criados conta os perfis criados de fato (não os já existentes).
 	Criados int
 	// Err, se não nil, é devolvido por todas as operações.
@@ -34,6 +37,8 @@ func New() *Store {
 		perfis:   map[string]perfil.Perfil{},
 		membros:  map[string]map[string]colaboracao.Membro{},
 		convites: map[string]map[string]colaboracao.Convite{},
+
+		assinaturas: map[string]map[string]push.Assinatura{},
 	}
 }
 

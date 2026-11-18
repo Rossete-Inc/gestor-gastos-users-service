@@ -87,3 +87,13 @@ func colaboracaoNoRouter(r *invoke.Router, svc *app.Service) {
 		return contract.Nomes{Nomes: n}, err
 	})
 }
+
+// pushNoRouter registra as operações de assinatura push (ADR 0011).
+func pushNoRouter(r *invoke.Router, svc *app.Service) {
+	operacao(r, contract.OpRegistrarAssinaturaPush, func(ctx context.Context, userID string, in contract.RegistrarAssinaturaPushIn) (any, error) {
+		return nil, svc.RegistrarAssinaturaPush(ctx, userID, in.Endpoint, in.P256dh, in.Auth)
+	})
+	operacao(r, contract.OpRemoverAssinaturaPush, func(ctx context.Context, userID string, in contract.RemoverAssinaturaPushIn) (any, error) {
+		return nil, svc.RemoverAssinaturaPush(ctx, userID, in.Endpoint)
+	})
+}
