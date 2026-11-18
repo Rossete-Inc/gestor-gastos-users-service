@@ -3,7 +3,8 @@
 // formatos de entrada, pelo handler.Lambda:
 //
 //   - o envelope do invoke, chamado pelo BFF pelo alias live;
-//   - o evento UserConfirmed, entregue pela regra do EventBridge.
+//   - os eventos UserConfirmed e MetasAtingidas, entregues pelas regras do
+//     EventBridge.
 //
 // Variáveis de ambiente (definidas pelo CDK):
 //
@@ -12,11 +13,16 @@
 //	USERS_TABLE=...      tabela DynamoDB dos perfis
 //	USER_POOL_ID=...     opcional: User Pool das operações de admin
 //	EVENT_BUS_NAME=...   opcional: barramento onde sai o UserDeleted
+//	VAPID_PUBLIC_PARAM=...   opcional: parâmetro SSM da chave pública do Web Push
+//	VAPID_PRIVATE_PARAM=...  opcional: SecureString da chave privada do Web Push
 //	LOG_LEVEL=info       opcional
 //
 // USER_POOL_ID e EVENT_BUS_NAME ligam as operações de admin (bloquear,
 // reativar, trocar papel, excluir) e vêm juntos. O CDK define os dois
 // (tarefa 10.4); sem eles, a função atende só o perfil e a listagem.
+//
+// VAPID_PUBLIC_PARAM e VAPID_PRIVATE_PARAM ligam juntos o envio das
+// notificações de meta (ADR 0011). Sem eles, os alertas só vão para o log.
 //
 // Build (o mesmo do go-service.yml):
 //
@@ -37,12 +43,15 @@ import (
 	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/app"
 	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/contas"
 	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/handler"
+	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/notificacao"
 	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/store"
 	"github.com/aws/aws-lambda-go/lambda"
+	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/eventbridge"
+	"github.com/aws/aws-sdk-go-v2/service/ssm"
 )
 
 const (
@@ -51,6 +60,9 @@ const (
 	// regras do expenses-service e do categories-service filtram por ele
 	// (SourceUsers no infra de cada um).
 	fonteDosEventos = "gestor-gastos.users"
+	// assuntoVAPID é o contato do serviço no JWT do VAPID: uma URL pública,
+	// nunca o e-mail de alguém.
+	assuntoVAPID = "https://github.com/Rossete-Inc"
 )
 
 // Config é a configuração da Lambda.
@@ -61,7 +73,14 @@ type Config struct {
 	// desligadas.
 	UserPoolID string
 	BusName    string
+	// VAPIDPublica e VAPIDPrivada são os caminhos no SSM das chaves do Web
+	// Push; vazios, o push fica desligado.
+	VAPIDPublica string
+	VAPIDPrivada string
 }
+
+// Push informa se o envio das notificações está configurado.
+func (c Config) Push() bool { return c.VAPIDPublica != "" }
 
 // Admin informa se as operações de admin estão configuradas.
 func (c Config) Admin() bool { return c.UserPoolID != "" }
@@ -80,6 +99,7 @@ func LoadConfig(lookup config.LookupFunc) (Config, error) {
 	c := Config{
 		Base: base, Table: r.Require("USERS_TABLE"),
 		UserPoolID: r.Get("USER_POOL_ID", ""), BusName: r.Get("EVENT_BUS_NAME", ""),
+		VAPIDPublica: r.Get("VAPID_PUBLIC_PARAM", ""), VAPIDPrivada: r.Get("VAPID_PRIVATE_PARAM", ""),
 	}
 	if err := r.Err(); err != nil {
 		return Config{}, err
@@ -87,7 +107,39 @@ func LoadConfig(lookup config.LookupFunc) (Config, error) {
 	if (c.UserPoolID == "") != (c.BusName == "") {
 		return Config{}, errors.New("USER_POOL_ID e EVENT_BUS_NAME ligam juntos as operações de admin: defina os dois ou nenhum")
 	}
+	if (c.VAPIDPublica == "") != (c.VAPIDPrivada == "") {
+		return Config{}, errors.New("VAPID_PUBLIC_PARAM e VAPID_PRIVATE_PARAM ligam juntos o push: defina os dois ou nenhum")
+	}
 	return c, nil
+}
+
+// SSMAPI é o subconjunto do client SSM usado aqui.
+type SSMAPI interface {
+	GetParameter(ctx context.Context, in *ssm.GetParameterInput, opt ...func(*ssm.Options)) (*ssm.GetParameterOutput, error)
+}
+
+// lerVAPID lê as chaves do Web Push, criadas à mão (docs/plano.md do
+// infra-base). A privada nunca vai para o log nem para mensagens de erro.
+func lerVAPID(ctx context.Context, api SSMAPI, publica, privada string) (notificacao.WebPush, error) {
+	ler := func(nome string, segredo bool) (string, error) {
+		out, err := api.GetParameter(ctx, &ssm.GetParameterInput{Name: aws.String(nome), WithDecryption: aws.Bool(segredo)})
+		if err != nil {
+			return "", fmt.Errorf("ler a chave VAPID em %s: %w", nome, err)
+		}
+		if out.Parameter == nil || aws.ToString(out.Parameter.Value) == "" {
+			return "", fmt.Errorf("chave VAPID vazia em %s", nome)
+		}
+		return *out.Parameter.Value, nil
+	}
+	pub, err := ler(publica, false)
+	if err != nil {
+		return notificacao.WebPush{}, err
+	}
+	priv, err := ler(privada, true)
+	if err != nil {
+		return notificacao.WebPush{}, err
+	}
+	return notificacao.WebPush{ChavePublica: pub, ChavePrivada: priv, Assunto: assuntoVAPID}, nil
 }
 
 // novoHandler monta o handler da função com o client DynamoDB da AWS.
@@ -112,7 +164,14 @@ func novoHandler(ctx context.Context, lookup config.LookupFunc) (handler.LambdaF
 		}
 		svc.ComAdmin(contas.NewCognito(cognitoidentityprovider.NewFromConfig(awsCfg), cfg.UserPoolID), pub)
 	}
-	log.Info("users-service configurado", "admin", cfg.Admin())
+	if cfg.Push() {
+		w, err := lerVAPID(ctx, ssm.NewFromConfig(awsCfg), cfg.VAPIDPublica, cfg.VAPIDPrivada)
+		if err != nil {
+			return nil, err
+		}
+		svc.ComPush(w)
+	}
+	log.Info("users-service configurado", "admin", cfg.Admin(), "push", cfg.Push())
 	return handler.Lambda(svc, log), nil
 }
 

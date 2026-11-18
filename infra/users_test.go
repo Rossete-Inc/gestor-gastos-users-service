@@ -181,37 +181,50 @@ func TestAliasLiveComCanaryDoCodeDeploy(t *testing.T) {
 	})
 }
 
-func TestRegraUserConfirmedNoAliasComDlq(t *testing.T) {
+func TestRegrasDeEventoNoAliasComDlq(t *testing.T) {
 	tpl := novaStackTeste(t, paramsTeste)
 	alias := idLogico(t, tpl, "AWS::Lambda::Alias")
 
-	tpl.ResourceCountIs(jsii.String("AWS::Events::Rule"), jsii.Number(1))
-	tpl.HasResourceProperties(jsii.String("AWS::Events::Rule"), map[string]interface{}{
-		"Name":         "gestor-gastos-dev-users-user-confirmed",
-		"EventBusName": busTeste,
-		"EventPattern": assertions.Match_ObjectEquals(&map[string]interface{}{
-			"source":      []interface{}{"gestor-gastos.auth"},
-			"detail-type": []interface{}{"UserConfirmed"},
-		}),
-		"Targets": []interface{}{
-			assertions.Match_ObjectLike(&map[string]interface{}{
-				"Arn":              ref(alias),
-				"DeadLetterConfig": map[string]interface{}{"Arn": dlqTeste},
-				"RetryPolicy": map[string]interface{}{
-					"MaximumRetryAttempts":     8,
-					"MaximumEventAgeInSeconds": 7200,
-				},
+	tpl.ResourceCountIs(jsii.String("AWS::Events::Rule"), jsii.Number(2))
+	tpl.ResourceCountIs(jsii.String("AWS::Lambda::Permission"), jsii.Number(2))
+	for _, r := range []struct{ nome, source, detailType string }{
+		{"gestor-gastos-dev-users-user-confirmed", "gestor-gastos.auth", "UserConfirmed"},
+		// ADR 0011: o alerta de meta vem do expenses-service
+		{"gestor-gastos-dev-users-metas-atingidas", "gestor-gastos.expenses", "MetasAtingidas"},
+	} {
+		tpl.HasResourceProperties(jsii.String("AWS::Events::Rule"), map[string]interface{}{
+			"Name":         r.nome,
+			"EventBusName": busTeste,
+			"EventPattern": assertions.Match_ObjectEquals(&map[string]interface{}{
+				"source":      []interface{}{r.source},
+				"detail-type": []interface{}{r.detailType},
 			}),
-		},
-	})
+			"Targets": []interface{}{
+				assertions.Match_ObjectLike(&map[string]interface{}{
+					"Arn":              ref(alias),
+					"DeadLetterConfig": map[string]interface{}{"Arn": dlqTeste},
+					"RetryPolicy": map[string]interface{}{
+						"MaximumRetryAttempts":     8,
+						"MaximumEventAgeInSeconds": 7200,
+					},
+				}),
+			},
+		})
 
-	// O EventBridge só pode invocar o alias, e só por esta regra.
-	tpl.HasResourceProperties(jsii.String("AWS::Lambda::Permission"), map[string]interface{}{
-		"Action":       "lambda:InvokeFunction",
-		"FunctionName": ref(alias),
-		"Principal":    "events.amazonaws.com",
-		"SourceArn":    map[string]interface{}{"Fn::GetAtt": []interface{}{idLogico(t, tpl, "AWS::Events::Rule"), "Arn"}},
-	})
+		// O EventBridge só pode invocar o alias, e só por esta regra.
+		regra := ""
+		for id := range *tpl.FindResources(jsii.String("AWS::Events::Rule"), &map[string]interface{}{
+			"Properties": map[string]interface{}{"Name": r.nome},
+		}) {
+			regra = id
+		}
+		tpl.HasResourceProperties(jsii.String("AWS::Lambda::Permission"), map[string]interface{}{
+			"Action":       "lambda:InvokeFunction",
+			"FunctionName": ref(alias),
+			"Principal":    "events.amazonaws.com",
+			"SourceArn":    map[string]interface{}{"Fn::GetAtt": []interface{}{regra, "Arn"}},
+		})
+	}
 }
 
 func TestFalhaDaFuncaoNoEventoVaiParaADlq(t *testing.T) {
@@ -276,6 +289,29 @@ func TestPermissoesDaFuncao(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Web Push (ADR 0011): ssm:GetParameter só nas duas chaves VAPID.
+	tpl.HasResourceProperties(jsii.String("AWS::IAM::Policy"), map[string]interface{}{
+		"PolicyDocument": map[string]interface{}{
+			"Statement": assertions.Match_ArrayWith(&[]interface{}{
+				assertions.Match_ObjectLike(&map[string]interface{}{
+					"Sid": "ChavesVAPID", "Action": "ssm:GetParameter", "Effect": "Allow",
+					"Resource": []interface{}{
+						assertions.Match_ObjectLike(&map[string]interface{}{"Fn::Join": assertions.Match_AnyValue()}),
+						assertions.Match_ObjectLike(&map[string]interface{}{"Fn::Join": assertions.Match_AnyValue()}),
+					},
+				}),
+			}),
+		},
+	})
+	for _, p := range []string{":parameter/gestor-gastos/dev/push/vapid-publica", ":parameter/gestor-gastos/dev/push/vapid-privada"} {
+		if !strings.Contains(string(politicas), p) {
+			t.Errorf("falta a leitura de %s: %s", p, politicas)
+		}
+	}
+	if strings.Count(string(politicas), "ssm:GetParameter") != 1 || strings.Contains(string(politicas), ":parameter/*") {
+		t.Errorf("a leitura do SSM deveria valer só nas chaves VAPID: %s", politicas)
+	}
+
 	if !strings.Contains(string(politicas), ":event-bus/"+busTeste+`"`) {
 		t.Errorf("PutEvents fora do barramento %s: %s", busTeste, politicas)
 	}
@@ -291,8 +327,10 @@ func TestVariaveisDasOperacoesDeAdmin(t *testing.T) {
 	tpl.HasResourceProperties(jsii.String("AWS::Lambda::Function"), map[string]interface{}{
 		"Environment": map[string]interface{}{
 			"Variables": assertions.Match_ObjectLike(&map[string]interface{}{
-				"USER_POOL_ID":   poolIDTeste,
-				"EVENT_BUS_NAME": busTeste,
+				"USER_POOL_ID":        poolIDTeste,
+				"EVENT_BUS_NAME":      busTeste,
+				"VAPID_PUBLIC_PARAM":  "/gestor-gastos/dev/push/vapid-publica",
+				"VAPID_PRIVATE_PARAM": "/gestor-gastos/dev/push/vapid-privada",
 			}),
 		},
 	})

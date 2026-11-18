@@ -1,5 +1,5 @@
-github.com/Rossete-Inc/gestor-gastos-go-commons v0.1.0 h1:V+wibI2vV/1fSOGv0vSp4nvRqlChyqmL0Gx7hXXXUUM=
-github.com/Rossete-Inc/gestor-gastos-go-commons v0.1.0/go.mod h1:x9KPx4MElC0yaUpzF//YmwaFPEjJAE9uxlMDYnffqqA=
+github.com/Rossete-Inc/gestor-gastos-go-commons v0.2.0 h1:wLDUJ6wJkQMMvscZSRoWMSodsTfhSoA46zMRc/AgsXM=
+github.com/Rossete-Inc/gestor-gastos-go-commons v0.2.0/go.mod h1:x9KPx4MElC0yaUpzF//YmwaFPEjJAE9uxlMDYnffqqA=
 github.com/SherClockHolmes/webpush-go v1.4.0 h1:ocnzNKWN23T9nvHi6IfyrQjkIc0oJWv1B1pULsf9i3s=
 github.com/SherClockHolmes/webpush-go v1.4.0/go.mod h1:XSq8pKX11vNV8MJEMwjrlTkxhAj1zKfxmyhdV7Pd6UA=
 github.com/aws/aws-lambda-go v1.55.1 h1:We2cCp4BwqqH/JW+bEEo1FhgG71rslvjfi4y7KmlrR0=
@@ -40,6 +40,8 @@ github.com/aws/aws-sdk-go-v2/service/lambda v1.114.3 h1:K0waQ/l0mZ/qjTFsIfbifurY
 github.com/aws/aws-sdk-go-v2/service/lambda v1.114.3/go.mod h1:nrKEzey36x3k1cR+3SQ3eMdjsGIjSo74GPopn3YTHdQ=
 github.com/aws/aws-sdk-go-v2/service/signin v1.13.0 h1:1cHBtZSsEEvghtDyjtRoYZ4GdjJy9Sh45GglOWEEm5Q=
 github.com/aws/aws-sdk-go-v2/service/signin v1.13.0/go.mod h1:PCRJucC12nFWle7wRGhSj0cw3OKB84M0EBwTrv34dhg=
+github.com/aws/aws-sdk-go-v2/service/ssm v1.82.1 h1:1KBNprYCN+cRDWKfw7lXUgRi44VoTs73eQFND00PwxI=
+github.com/aws/aws-sdk-go-v2/service/ssm v1.82.1/go.mod h1:0SFlytwGtgihEA6ZQxy6SgXHYUGhq9gkeMZD71+Pi38=
 github.com/aws/aws-sdk-go-v2/service/sso v1.39.4 h1:qQ97XqrlFGRRhhrcDbeqUVeezamo1a1F7lH4HczU7EA=
 github.com/aws/aws-sdk-go-v2/service/sso v1.39.4/go.mod h1:mPM3sWIm0iUGl5OWkR9cG23PRFQ0Ir6y+3Hg0lKBAAE=
 github.com/aws/aws-sdk-go-v2/service/ssooidc v1.44.4 h1:tbsL9+L+1SlD2W+9RjL7wD9ZVsxel7QXdQlIWt5tEi8=

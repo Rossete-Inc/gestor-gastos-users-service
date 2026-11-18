@@ -13,6 +13,7 @@ import (
 	"github.com/Rossete-Inc/gestor-gastos-go-commons/page"
 	"github.com/Rossete-Inc/gestor-gastos-users-service/contract"
 	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/app"
+	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/notificacao"
 	"github.com/Rossete-Inc/gestor-gastos-users-service/internal/perfil"
 )
 
@@ -82,6 +83,9 @@ func Events(svc *app.Service, log *slog.Logger) *events.Router {
 	r.Handle(events.UserConfirmed, events.Typed(func(ctx context.Context, _ events.Event, d events.UserConfirmedDetail) error {
 		return svc.ConsumirUserConfirmed(ctx, d)
 	}))
+	r.Handle(events.MetasAtingidas, events.Typed(func(ctx context.Context, _ events.Event, d events.MetasAtingidasDetail) error {
+		return svc.NotificarMetas(ctx, d.DonoID, alertasDoEvento(d.Alertas))
+	}))
 	return r
 }
 
@@ -92,4 +96,16 @@ func exigirUsuario(userID string) error {
 		return errs.BadRequest("usuario_ausente", "Requisição sem usuário.")
 	}
 	return nil
+}
+
+// alertasDoEvento converte os alertas do MetasAtingidas (ADR 0011).
+func alertasDoEvento(l []events.AlertaDeMeta) []notificacao.Alerta {
+	out := make([]notificacao.Alerta, 0, len(l))
+	for _, a := range l {
+		out = append(out, notificacao.Alerta{
+			NomeCategoria: a.NomeCategoria, Mes: a.Mes, Limiar: a.Limiar,
+			TotalCentavos: a.TotalCentavos, MetaCentavos: a.MetaCentavos,
+		})
+	}
+	return out
 }

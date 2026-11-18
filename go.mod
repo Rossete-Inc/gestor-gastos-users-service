@@ -3,7 +3,7 @@ module github.com/Rossete-Inc/gestor-gastos-users-service
 go 1.27.0
 
 require (
-	github.com/Rossete-Inc/gestor-gastos-go-commons v0.1.0
+	github.com/Rossete-Inc/gestor-gastos-go-commons v0.2.0
 	github.com/SherClockHolmes/webpush-go v1.4.0
 	github.com/aws/aws-lambda-go v1.55.1
 	github.com/aws/aws-sdk-go-v2 v1.48.0
@@ -13,6 +13,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider v1.76.0
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.73.2
 	github.com/aws/aws-sdk-go-v2/service/eventbridge v1.55.11
+	github.com/aws/aws-sdk-go-v2/service/ssm v1.82.1
 )
 
 require (

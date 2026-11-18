@@ -35,6 +35,19 @@ const (
 	// events.UserConfirmed da go-commons.
 	DetailTypeUserConfirmed = "UserConfirmed"
 
+	// SourceExpenses é o `source` do MetasAtingidas publicado pelo
+	// expenses-service (ADR 0011).
+	SourceExpenses = Projeto + ".expenses"
+
+	// DetailTypeMetasAtingidas é o detail-type consumido, igual a
+	// events.MetasAtingidas da go-commons.
+	DetailTypeMetasAtingidas = "MetasAtingidas"
+
+	// ParamVAPIDPublica e ParamVAPIDPrivada são as chaves do Web Push,
+	// criadas à mão (docs/plano.md do infra-base); a função lê no início.
+	ParamVAPIDPublica = "push/vapid-publica"
+	ParamVAPIDPrivada = "push/vapid-privada"
+
 	// AliasLive é o alias que o BFF invoca e que a regra do EventBridge aciona.
 	// O CodeDeploy move o tráfego dele de uma versão para a outra.
 	AliasLive = "live"
